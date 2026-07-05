@@ -164,6 +164,7 @@ const state = {
   startedAt: 0,
   raceDurationMs: 120000,
   sentFinish: false,
+  sentTimerFinish: false,
   lastStateSend: 0,
   lastScoreSend: 0,
   lastPing: 0,
@@ -506,6 +507,7 @@ function startRace() {
   state.remote.name = remotePlayer?.name || "Opponent";
   state.mode = "race";
   state.sentFinish = false;
+  state.sentTimerFinish = false;
   els.shell.classList.add("is-hidden");
   els.hud.classList.remove("is-hidden");
   els.results.classList.add("is-hidden");
@@ -658,9 +660,14 @@ function loop(now) {
       updateHud(remainingMs);
       if (now - state.lastStateSend > 50) sendState(now);
       if (now - state.lastScoreSend > 250) sendScore(now, remainingMs);
-      if (!state.sentFinish && (remainingMs <= 0 || state.car.progress > 0.985)) {
+      if (!state.sentFinish && state.car.progress > 0.985) {
         state.sentFinish = true;
         sendWs({ type: "finish", score: Math.round(state.car.score), progress: state.car.progress, remainingMs });
+      }
+      if (remainingMs <= 0 && !state.sentTimerFinish) {
+        state.sentTimerFinish = true;
+        state.sentFinish = true;
+        sendWs({ type: "finish", score: Math.round(state.car.score), progress: state.car.progress, remainingMs: 0 });
       }
     }
     drawCar(state.remote, true);

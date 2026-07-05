@@ -66,6 +66,18 @@ function winnerFrom(room, live, reason) {
   };
 }
 
+function resultForDisconnect(room, live, disconnectedPlayerId) {
+  const opponent = room.players.find((player) => player.id !== disconnectedPlayerId);
+  const disconnected = room.players.find((player) => player.id === disconnectedPlayerId);
+  const result = winnerFrom(room, live, "disconnect");
+  if (opponent) result.winnerId = opponent.id;
+  if (disconnected) {
+    const loser = result.players.find((player) => player.id === disconnected.id);
+    if (loser) loser.disconnected = true;
+  }
+  return result;
+}
+
 async function persistPresence(room, live) {
   const now = new Date().toISOString();
   for (const player of room.players) {
@@ -230,6 +242,23 @@ wss.on("connection", async (socket, request) => {
         connected: false,
         players: publicRoom(latestRoom).players,
       });
+    }
+    if (live.startedAt && !live.ended) {
+      setTimeout(async () => {
+        if (live.sockets.has(playerId) || live.ended) return;
+        const roomAfterGrace = await getRoom(code);
+        if (!roomAfterGrace || roomAfterGrace.status === "ended") return;
+        const opponent = roomAfterGrace.players.find((player) => player.id !== playerId);
+        if (!opponent) return;
+        live.ended = true;
+        roomAfterGrace.status = "ended";
+        roomAfterGrace.endedAt = new Date().toISOString();
+        const result = resultForDisconnect(roomAfterGrace, live, playerId);
+        roomAfterGrace.winnerId = result.winnerId;
+        roomAfterGrace.resultReason = result.reason;
+        await persistPresence(roomAfterGrace, live);
+        broadcast(live, { type: "results", result, room: publicRoom(roomAfterGrace) });
+      }, 8000);
     }
   });
 });
