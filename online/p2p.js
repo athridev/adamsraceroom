@@ -121,19 +121,60 @@
     p2p.connectionOpen = false;
   }
 
+  function canSendRaw() {
+    return Boolean(p2p.conn && (p2p.conn.open || p2p.connectionOpen));
+  }
+
+  function trySendRaw(payload) {
+    if (!p2p.conn) return false;
+    try {
+      p2p.conn.send(payload);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function enqueueRaw(payload) {
+    p2p.outbox.push(payload);
+    if (p2p.outbox.length > 80) p2p.outbox.shift();
+  }
+
   function flushRaw() {
-    if (!p2p.conn?.open) return;
+    if (!canSendRaw()) return;
     const pending = p2p.outbox.splice(0);
-    for (const payload of pending) p2p.conn.send(payload);
+    for (let i = 0; i < pending.length; i++) {
+      if (trySendRaw(pending[i])) continue;
+      p2p.outbox = pending.slice(i).concat(p2p.outbox);
+      while (p2p.outbox.length > 80) p2p.outbox.shift();
+      return;
+    }
   }
 
   function sendRaw(payload) {
-    if (p2p.conn?.open) {
-      p2p.conn.send(payload);
+    if (canSendRaw() && trySendRaw(payload)) {
       return;
     }
-    p2p.outbox.push(payload);
-    if (p2p.outbox.length > 80) p2p.outbox.shift();
+    enqueueRaw(payload);
+  }
+
+  function markChannelUsable() {
+    if (!p2p.conn) return;
+    if (!p2p.connectionOpen) {
+      p2p.connectionOpen = true;
+      localEls().status.textContent = "Peer connected";
+      startGuestJoinLoop();
+    }
+    flushRaw();
+  }
+
+  function sendLobbyReliable(payload) {
+    sendRaw(payload);
+    [300, 900, 1800].forEach((delay) => {
+      setTimeout(() => {
+        if (state.mode === "lobby" && !p2p.countdownSent) sendRaw(payload);
+      }, delay);
+    });
   }
 
   function sendGuestJoin() {
@@ -175,7 +216,10 @@
   function broadcast(type = "presence") {
     if (!state.room) return;
     const packet = { type, room: state.room, players: state.room.players, serverTime: Date.now() };
-    if (p2p.role === "host") sendRaw(packet);
+    if (p2p.role === "host") {
+      if (type === "hello" || type === "ready" || type === "presence") sendLobbyReliable(packet);
+      else sendRaw(packet);
+    }
     handleWs(packet);
   }
 
@@ -264,6 +308,7 @@
   }
 
   function handlePeerMessage(msg) {
+    markChannelUsable();
     if (p2p.role === "host") {
       handleFrom("p2", msg);
       return;
@@ -296,15 +341,10 @@
 
   function setupConnection(conn) {
     p2p.conn = conn;
-    p2p.outbox = [];
     p2p.connectionOpen = false;
 
     const markOpen = () => {
-      if (p2p.connectionOpen) return;
-      p2p.connectionOpen = true;
-      localEls().status.textContent = "Peer connected";
-      flushRaw();
-      startGuestJoinLoop();
+      markChannelUsable();
     };
 
     conn.on("open", markOpen);
@@ -390,7 +430,21 @@
       return;
     }
     if (p2p.role === "host") handleFrom("p1", payload);
+    else if (payload?.type === "ready") sendLobbyReliable(payload);
     else sendRaw(payload);
+  };
+
+  const originalHandleWs = handleWs;
+  handleWs = function (msg) {
+    if (state.transport === "p2p") {
+      if ((msg.type === "hello" || msg.type === "presence" || msg.type === "ready") && state.mode !== "lobby") {
+        if (msg.room) state.room = msg.room;
+        if (state.room && msg.players) state.room.players = msg.players;
+        return;
+      }
+      if (msg.type === "countdown" && (state.mode === "race" || state.mode === "results")) return;
+    }
+    originalHandleWs(msg);
   };
 
   if (typeof startRace === "function") {
@@ -404,6 +458,22 @@
 
   const { createForm, otpForm, joinForm, status } = localEls();
   if (status) status.textContent = "Peer rooms ready";
+
+  document.querySelector("#ready-button")?.addEventListener("click", (event) => {
+    if (state.transport !== "p2p") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!state.room || state.mode !== "lobby") return;
+    state.ready = true;
+    const me = state.room.players.find((player) => player.id === state.playerId);
+    if (me) {
+      me.ready = true;
+      renderLobby();
+    }
+    event.currentTarget.textContent = "Ready";
+    if (p2p.role === "host") handleFrom("p1", { type: "ready" });
+    else sendLobbyReliable({ type: "ready" });
+  }, true);
 
   createForm?.addEventListener("submit", (event) => {
     event.preventDefault();
