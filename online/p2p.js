@@ -32,7 +32,6 @@
     local: null,
     remoteMeta: null,
     reverseStarted: false,
-    fallbackTimer: null,
     outbox: [],
     joinAck: false,
     joinLoopStarted: false,
@@ -134,8 +133,6 @@
     p2p.sendConn = null;
     p2p.remoteMeta = null;
     p2p.reverseStarted = false;
-    clearTimeout(p2p.fallbackTimer);
-    p2p.fallbackTimer = null;
     p2p.outbox = [];
     p2p.joinAck = false;
     p2p.joinLoopStarted = false;
@@ -214,28 +211,6 @@
     });
   }
 
-  function scheduleReadyFallback() {
-    clearTimeout(p2p.fallbackTimer);
-    p2p.fallbackTimer = setTimeout(() => {
-      if (state.mode !== "lobby" || !state.ready || !state.room || state.room.players.length < 2) return;
-      for (const player of state.room.players) {
-        if (player.connected) player.ready = true;
-      }
-      if (typeof renderLobby === "function") renderLobby();
-      const now = Date.now();
-      const packet = {
-        type: "countdown",
-        room: state.room,
-        countdownAt: now + 800,
-        startedAt: now + 3800,
-        serverTime: now,
-      };
-      if (p2p.role === "host") p2p.countdownSent = true;
-      sendEverywhere(packet);
-      handleWs(packet);
-    }, 4500);
-  }
-
   function sendGuestJoin() {
     sendRaw({ type: "join", player: p2p.local });
     sendRaw({ type: "ping", clientTime: Date.now() });
@@ -289,7 +264,7 @@
     const packet = { type, room: state.room, players: state.room.players, serverTime: Date.now() };
     if (p2p.role === "host") {
       if (type === "hello" || type === "ready" || type === "presence") sendLobbyReliable(packet);
-      else sendRaw(packet);
+      else sendEverywhere(packet);
     }
     handleWs(packet);
   }
@@ -308,7 +283,6 @@
     if (p2p.role !== "host" || p2p.countdownSent || !state.room) return;
     const ready = state.room.players.length >= 2 && state.room.players.every((player) => player.connected && player.ready);
     if (!ready) return;
-    clearTimeout(p2p.fallbackTimer);
     p2p.countdownSent = true;
     const now = Date.now();
     const packet = {
@@ -318,7 +292,7 @@
       startedAt: now + 3800,
       serverTime: now,
     };
-    sendRaw(packet);
+    sendEverywhere(packet);
     handleWs(packet);
   }
 
@@ -336,7 +310,7 @@
       ? players.find((player) => player.id === forcedWinnerId)
       : players.slice().sort((a, b) => (b.score - a.score) || (b.progress - a.progress))[0];
     const result = { winnerId: winner?.id || "", players };
-    sendRaw({ type: "results", result, serverTime: Date.now() });
+    sendEverywhere({ type: "results", result, serverTime: Date.now() });
     showResults(result);
   }
 
@@ -351,7 +325,7 @@
       return;
     }
     if (msg.type === "ping") {
-      sendRaw({ type: "pong", serverTime: Date.now(), clientTime: msg.clientTime });
+      sendEverywhere({ type: "pong", serverTime: Date.now(), clientTime: msg.clientTime });
       return;
     }
     if (msg.type === "ready") {
@@ -362,19 +336,19 @@
       return;
     }
     if (msg.type === "state") {
-      if (playerId === state.playerId) sendRaw({ type: "state", playerId, state: msg.state });
+      if (playerId === state.playerId) sendEverywhere({ type: "state", playerId, state: msg.state });
       else handleWs({ type: "state", playerId, state: msg.state });
       return;
     }
     if (msg.type === "score") {
       const score = { score: Number(msg.score || 0), progress: Number(msg.progress || 0), finishedAt: msg.finishedAt || null, remainingMs: msg.remainingMs };
       updatePlayer(playerId, score);
-      sendRaw({ type: "score", playerId, score, serverTime: Date.now() });
+      sendEverywhere({ type: "score", playerId, score, serverTime: Date.now() });
       return;
     }
     if (msg.type === "finish") {
       updatePlayer(playerId, { score: Number(msg.score || 0), progress: Number(msg.progress || 0), remainingMs: msg.remainingMs, finished: true });
-      sendRaw({ type: "player-finished", playerId, serverTime: Date.now() });
+      sendEverywhere({ type: "player-finished", playerId, serverTime: Date.now() });
       if (state.room.players.every((player) => player.finished)) showP2PResults();
     }
   }
@@ -514,7 +488,7 @@
     }
     if (p2p.role === "host") handleFrom("p1", payload);
     else if (payload?.type === "ready") sendLobbyReliable(payload);
-    else sendRaw(payload);
+    else sendEverywhere(payload);
   };
 
   const originalHandleWs = handleWs;
@@ -556,7 +530,6 @@
     event.currentTarget.textContent = "Ready";
     if (p2p.role === "host") handleFrom("p1", { type: "ready" });
     else sendLobbyReliable({ type: "ready" });
-    scheduleReadyFallback();
   }, true);
 
   createForm?.addEventListener("submit", (event) => {
