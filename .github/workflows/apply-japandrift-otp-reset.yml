@@ -16,14 +16,148 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Load and apply saved OTP reset patch
+      - name: Apply OTP reset patch
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/athridev/japandrift/f6610a7dd8c4b0d32c7c4e6b51c966a4270a5d29/.github/workflows/apply-japandrift-otp-reset.yml" > /tmp/source-workflow.yml
-          awk "found && /^PATCH_B64$/ {exit} found {print} /<<'PATCH_B64'/ {found=1}" /tmp/source-workflow.yml > /tmp/japandrift-otp-reset.patch.gz.b64
-          test -s /tmp/japandrift-otp-reset.patch.gz.b64
-          base64 -d /tmp/japandrift-otp-reset.patch.gz.b64 | gunzip > /tmp/japandrift-otp-reset.patch
+          cat > /tmp/japandrift-otp-reset.patch <<'PATCH'
+          diff --git a/api/online/create-room.js b/api/online/create-room.js
+          index ac11ead..8a47052 100644
+          --- a/api/online/create-room.js
+          +++ b/api/online/create-room.js
+          @@ -1,5 +1,6 @@
+           const {
+             activePath,
+          +  deleteJson,
+             freshRoom,
+             generateRoomCode,
+             getActiveRoom,
+          @@ -8,6 +9,7 @@ const {
+             publicRoom,
+             putJson,
+             requireCreator,
+          +  roomPath,
+             saveRoom,
+             sendJson,
+             signPlayerToken,
+          @@ -32,12 +34,23 @@ module.exports = async function handler(request, response) {
+             try {
+               const active = await getActiveRoom();
+               if (active) {
+          -      return sendJson(response, 409, {
+          -        error: "You already have an active Japan Drift session.",
+          -        room: publicRoom(active),
+          -        playerId: "p1",
+          -        playerToken: signPlayerToken(active.code, "p1"),
+          -      });
+          +      const resetActive = body.reset === true || body.reset === "true" || body.reset === "on";
+          +      if (!resetActive) {
+          +        return sendJson(response, 200, {
+          +          ok: true,
+          +          reused: true,
+          +          room: publicRoom(active),
+          +          playerId: "p1",
+          +          playerToken: signPlayerToken(active.code, "p1"),
+          +        });
+          +      }
+          +
+          +      active.status = "ended";
+          +      active.endedAt = new Date().toISOString();
+          +      active.resultReason = "creator-reset";
+          +      await saveRoom(active);
+          +      await deleteJson(activePath());
+          +      await deleteJson(roomPath(active.code));
+               }
+           
+               let code = generateRoomCode();
+          diff --git a/online/index.html b/online/index.html
+          index 5d9fec0..d156086 100644
+          --- a/online/index.html
+          +++ b/online/index.html
+          @@ -27,7 +27,7 @@
+                 <form class="stack" id="create-form">
+                   <label>
+                     <span>Email</span>
+          -          <input name="email" type="email" autocomplete="email" value="adamjaljoly@gmail.com" required />
+          +          <input name="email" type="email" autocomplete="email" required />
+                   </label>
+                   <button class="primary" type="submit">Send OTP</button>
+                 </form>
+          @@ -45,6 +45,10 @@
+                     <span>Car</span>
+                     <select name="car" id="host-car"></select>
+                   </label>
+          +        <label class="check-row">
+          +          <input name="reset" type="checkbox" />
+          +          <span>Reset active session</span>
+          +        </label>
+                   <button class="primary" type="submit">Create Session</button>
+                 </form>
+           
+          diff --git a/online/online.js b/online/online.js
+          index 3abeafc..2e17884 100644
+          --- a/online/online.js
+          +++ b/online/online.js
+          @@ -183,10 +183,22 @@ function api(path, options = {}) {
+               headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+               ...options,
+             }).then(async (response) => {
+          -    const body = await response.json().catch(() => ({}));
+          +    const text = await response.text();
+          +    let body = {};
+          +    if (text) {
+          +      try {
+          +        body = JSON.parse(text);
+          +      } catch {
+          +        body = { error: text.trim().slice(0, 160) };
+          +      }
+          +    }
+               if (!response.ok) {
+          -      const error = new Error(body.error || "Request failed.");
+          +      const fallback = response.status === 404
+          +        ? "Online backend is not deployed on this domain."
+          +        : `${response.status} ${response.statusText || "Request failed"}`;
+          +      const error = new Error(body.error || fallback);
+                 error.body = body;
+          +      error.status = response.status;
+                 throw error;
+               }
+               return body;
+          @@ -752,7 +764,7 @@ els.otpForm.addEventListener("submit", async (event) => {
+               });
+               const result = await api("/api/online/create-room", {
+                 method: "POST",
+          -      body: JSON.stringify({ name: otp.name, car: otp.car }),
+          +      body: JSON.stringify({ name: otp.name, car: otp.car, reset: otp.reset === "on" }),
+               });
+               state.playerId = result.playerId;
+               state.playerToken = result.playerToken;
+          diff --git a/online/styles.css b/online/styles.css
+          index 3c412c3..86a9331 100644
+          --- a/online/styles.css
+          +++ b/online/styles.css
+          @@ -123,6 +123,19 @@ input:focus, select:focus {
+             border-color: #75e8ff;
+             box-shadow: 0 0 0 3px rgba(117,232,255,0.16);
+           }
+          +.check-row {
+          +  display: flex;
+          +  align-items: center;
+          +  gap: 10px;
+          +}
+          +.check-row input {
+          +  width: 18px;
+          +  min-height: 18px;
+          +  accent-color: #ffb14d;
+          +}
+          +.check-row span {
+          +  line-height: 1.25;
+          +}
+           .primary {
+             background: linear-gradient(135deg, #ff2f80, #ffb14d);
+           }
+PATCH
+          sed -i 's/^          //' /tmp/japandrift-otp-reset.patch
           git apply --index --whitespace=nowarn /tmp/japandrift-otp-reset.patch
           rm -f .github/workflows/apply-japandrift-otp-reset.yml
           git add -A
