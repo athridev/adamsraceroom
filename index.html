@@ -31,6 +31,8 @@
    v2.3: real gearbox pacing (hysteresis, shift cooldown, torque cut,
    limiter over-swing), lift-off flutter fixed (raw-pedal edge detect)
    with a longer surge whose stutter slows as it dies — tolololo.
+   v2.4: per-car gear ratios, rpm/speed/load shift logic, natural
+   downshifts, and lower-gear torque pull for more believable drift runs.
    ===================================================================== */
 
 // ------------------------------------------------ tiny math
@@ -259,6 +261,114 @@ const CARS = [
   }
 ];
 
+const DEFAULT_GEARBOX = {
+  tops: [0.26, 0.45, 0.64, 0.82, 1],
+  ratios: [3.45, 2.08, 1.42, 1.05, 0.82],
+  idle: 0.15, redline: 1.02, up: 0.92, down: 0.36,
+  shiftDelay: 0.42, minHold: 1.12
+};
+const GEARBOX_BY_CAR = {
+  ae86: {
+    tops: [0.24, 0.43, 0.62, 0.80, 1],
+    ratios: [3.59, 2.02, 1.38, 1.00, 0.86],
+    up: 0.94, down: 0.39, shiftDelay: 0.38, minHold: 1.14
+  },
+  s15: {
+    tops: [0.25, 0.44, 0.63, 0.82, 1],
+    ratios: [3.32, 1.90, 1.31, 1.00, 0.76],
+    up: 0.91, down: 0.35, shiftDelay: 0.40, minHold: 1.12
+  },
+  fd: {
+    tops: [0.27, 0.46, 0.65, 0.83, 1],
+    ratios: [3.48, 2.02, 1.39, 1.00, 0.72],
+    up: 0.96, down: 0.37, shiftDelay: 0.36, minHold: 1.04
+  },
+  r34: {
+    tops: [0.25, 0.43, 0.62, 0.81, 1],
+    ratios: [3.83, 2.36, 1.69, 1.31, 1.00],
+    up: 0.90, down: 0.34, shiftDelay: 0.42, minHold: 1.20
+  },
+  a80: {
+    tops: [0.27, 0.47, 0.66, 0.84, 1],
+    ratios: [3.83, 2.36, 1.53, 1.00, 0.79],
+    up: 0.91, down: 0.34, shiftDelay: 0.44, minHold: 1.20
+  }
+};
+for (const c of CARS) c.gearbox = Object.assign({}, DEFAULT_GEARBOX, GEARBOX_BY_CAR[c.id] || {});
+
+function carGearbox(spec) {
+  return spec.gearbox || DEFAULT_GEARBOX;
+}
+function gearTopSpeed(spec, gearI) {
+  const gb = carGearbox(spec);
+  return spec.phys.maxSpeed * gb.tops[clamp(gearI, 0, gb.tops.length - 1)];
+}
+function gearRpmTarget(c, speed, gearI, throttle) {
+  const gb = carGearbox(c.spec);
+  const top = Math.max(1, gearTopSpeed(c.spec, gearI));
+  const prevTop = gearI > 0 ? gearTopSpeed(c.spec, gearI - 1) : 0;
+  const low = prevTop * 0.5;
+  const band = Math.max(1, top - low);
+  let rpm = gb.idle + (gb.redline - gb.idle) * clamp((speed - low) / band, 0, 1.12);
+  if (speed < 55) rpm = Math.max(rpm, gb.idle + throttle * 0.46);
+  return clamp(rpm, gb.idle * 0.8, gb.redline + 0.1);
+}
+function gearboxPull(c) {
+  const gb = carGearbox(c.spec);
+  const ratios = gb.ratios;
+  const first = ratios[0];
+  const last = ratios[ratios.length - 1];
+  const ratio = ratios[clamp(c.gearI || 0, 0, ratios.length - 1)];
+  const ratioN = clamp((ratio - last) / Math.max(0.01, first - last), 0, 1);
+  const rpm = c.rpm || gb.idle;
+  const torqueBand = 0.62 + 0.38 * clamp((rpm - 0.20) / 0.55, 0, 1);
+  const limiterFade = 0.24 * clamp((rpm - 0.96) / 0.16, 0, 1);
+  return clamp((0.62 + ratioN * 0.38) * (torqueBand - limiterFade), 0.42, 1.02);
+}
+function updateGearbox(c, dt, speed, throttle, brake, onShift) {
+  const gb = carGearbox(c.spec);
+  const maxGear = gb.tops.length - 1;
+  c.gearI = clamp(c.gearI || 0, 0, maxGear);
+  c.shiftT = Math.max(0, (c.shiftT || 0) - dt);
+  c.gearHold = Math.max(0, (c.gearHold || 0) - dt);
+  if (speed < 32 && c.gearI > 0) {
+    c.gearI = 0;
+    c.shiftT = 0;
+    c.gearHold = 0.18;
+    c.rpm = lerp(c.rpm || gb.idle, gearRpmTarget(c, speed, 0, throttle), clamp(dt * 14, 0, 1));
+    c.gear = 1;
+    return;
+  }
+
+  const rpmNow = gearRpmTarget(c, speed, c.gearI, throttle);
+  const loaded = throttle > 0.28;
+  const upAt = gb.up + (throttle < 0.55 ? 0.04 : 0) - (c.drifting ? 0.02 : 0);
+  const downAt = gb.down + (throttle > 0.55 ? 0.05 : 0) + (brake > 0.25 ? 0.03 : 0);
+  let shiftDir = 0;
+
+  if (c.shiftT <= 0 && c.gearHold <= 0) {
+    if (loaded && c.gearI < maxGear && rpmNow >= upAt) {
+      shiftDir = 1;
+    } else if (c.gearI > 0) {
+      const prevTop = gearTopSpeed(c.spec, c.gearI - 1);
+      if (rpmNow <= downAt || speed < prevTop * 0.52) shiftDir = -1;
+    }
+  }
+
+  if (shiftDir) {
+    c.gearI = clamp(c.gearI + shiftDir, 0, maxGear);
+    c.shiftT = gb.shiftDelay;
+    c.gearHold = gb.minHold + gb.shiftDelay;
+    if (speed > 35 && onShift) onShift(shiftDir > 0);
+  }
+
+  let rpmT = gearRpmTarget(c, speed, c.gearI, throttle);
+  if (shiftDir > 0) rpmT = Math.min(rpmT, Math.max(gb.idle, rpmNow * 0.64));
+  if (shiftDir < 0) rpmT = Math.max(rpmT, Math.min(gb.redline + 0.08, rpmNow + 0.22));
+  c.rpm = lerp(c.rpm || gb.idle, rpmT, clamp(dt * (c.shiftT > 0 ? 12 : 8), 0, 1));
+  c.gear = c.gearI + 1;
+}
+
 // node smoke test (never runs in a browser)
 if (typeof window === 'undefined') {
   let bad = 0;
@@ -272,7 +382,7 @@ if (typeof window === 'undefined') {
   const ns = nearestSample(TRACK.pts[10].x, TRACK.pts[10].y, null, 0);
   console.log('[smoke] nearestSample self-hit', ns.i === 10, 'dist', ns.d.toFixed(2));
   console.log('[smoke] cars', CARS.length,
-    'specs-ok', CARS.every(c => c.phys && c.eng && c.body2 && c.stats));
+    'specs-ok', CARS.every(c => c.phys && c.eng && c.body2 && c.stats && c.gearbox));
   console.log('[smoke] wide-enough', minW >= 140);
 }
 
@@ -1683,7 +1793,7 @@ function startGame() {
       prog: TRACK.startIdx, off: false, deep: false,
       prevEb: false, inThr: 0, thrRaw: 0, inEb: false, brakeOn: false, shiftT: 0,
       pwl: null, pwr: null, roll: 0, pitch: 0, smokeAcc: 0, spinLock: false,
-      rpm: 0, gearI: 0, gear: 1, flash: 0, wallT: 0, wallZone: false
+      rpm: 0, gearI: 0, gear: 1, gearHold: 0.82, flash: 0, wallT: 0, wallZone: false
     };
     score.total = 0; score.chain = 0; score.mult = 1; score.chainT = 0;
     score.grace = 0; score.best = 0; score.wallCalled = false;
@@ -1716,6 +1826,7 @@ function startGame() {
     car.slip = 0; car.drifting = false; car.spinLock = false;
     car.wallT = 0; car.smokeAcc = 0; car.inEb = false; car.brakeOn = false;
     car.steer = 0; car.roll = 0; car.pitch = 0; car.speed = 0;
+    car.rpm = 0; car.gearI = 0; car.gear = 1; car.gearHold = 0.82; car.shiftT = 0;
     score.chain = 0; score.mult = 1; score.chainT = 0; score.grace = 0;
     score.wallCalled = false;
   }
@@ -1773,6 +1884,7 @@ function startGame() {
     let vf = c.vx * cos + c.vy * sin;      // forward speed
     let vr = -c.vx * sin + c.vy * cos;     // lateral (slide) speed
     const speed = Math.hypot(c.vx, c.vy);
+    updateGearbox(c, dt, speed, thr, brk, up => { if (G.state === 'play') SND.shift(up); });
 
     // longitudinal (thr / brk are analog). Past ~65° of slip the driven
     // wheels point sideways: engine thrust can no longer straighten the
@@ -1784,7 +1896,7 @@ function startGame() {
     const sideways = clamp((a1 - satStart) / satRamp, 0, 1) * clamp((2.9 - a1) / 0.25, 0, 1);
     const shiftCut = (c.shiftT || 0) > 0.08 ? 0.1 : 1;   // clutch out mid-shift
     const thrEff = thr * (1 - 0.9 * sideways) * shiftCut; // recovers near full reverse
-    if (thr && vf < P.maxSpeed) vf += P.accel * thrEff * dt;
+    if (thr && vf < P.maxSpeed) vf += P.accel * gearboxPull(c) * thrEff * dt;
     if (brk) { if (vf > 25) vf -= P.brake * brk * dt; else vf -= P.accel * 0.45 * brk * dt; }
     vf -= vf * P.drag * dt;
     vf = clamp(vf, -P.maxSpeed * 0.3, P.maxSpeed);
@@ -1836,29 +1948,6 @@ function startGame() {
     c.vy = sin * vf + cos * vr;
     const c2 = Math.cos(c.h), s2 = Math.sin(c.h);
 
-    // 5-speed gear model drives the engine synth + HUD.
-    // Hysteresis + a shift cooldown space the ratios out like a real box
-    // (no machine-gun shifting) and each change interrupts torque.
-    {
-      const sN = clamp(speed / P.maxSpeed, 0, 1);
-      const gx = Math.min(4.999, sN * 5);
-      c.shiftT = Math.max(0, (c.shiftT || 0) - dt);
-      if (c.shiftT <= 0) {
-        if (gx >= c.gearI + 1 && c.gearI < 4) {
-          c.gearI++;
-          if (speed > 40 && G.state === 'play') { SND.shift(true); c.shiftT = 0.34; }
-        } else if (gx < c.gearI - 0.18 && c.gearI > 0) {
-          c.gearI--;
-          if (speed > 40 && G.state === 'play') { SND.shift(false); c.shiftT = 0.30; }
-        }
-      }
-      // revs over-swing to ~110% right before the change — holding the
-      // gear to the limiter — then fall through the shift
-      let rpmT = 0.2 + 0.8 * clamp(gx - c.gearI, 0, 1.12);
-      if (speed < 60) rpmT = Math.max(rpmT, 0.16 + c.inThr * 0.55);
-      c.rpm = lerp(c.rpm, rpmT, clamp(dt * (c.shiftT > 0 ? 10 : 8), 0, 1));
-      c.gear = c.gearI + 1;
-    }
     // weight transfer for the stacked-sprite lean
     c.pitch = lerp(c.pitch, brk + (eb ? 0.4 : 0) - c.inThr * 0.55, clamp(dt * 6, 0, 1));
     c.flash = Math.max(0, c.flash - dt);

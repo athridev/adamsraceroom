@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "check": "node -c api/online/_lib.js && node -c api/online/request-otp.js && node -c api/online/verify-otp.js && node -c api/online/session.js && node -c api/online/logout.js && node -c api/online/create-room.js && node -c api/online/join-room.js && node -c api/online/room.js && node -c api/online/end-room.js && node -c api/online/ws.js && node -c online/online.js"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#120816" />
+  <title>Japan Drift Online</title>
+  <link rel="stylesheet" href="/online/styles.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <main class="shell" id="shell">
+    <section class="brand">
+      <p class="eyebrow">Ebisu Circuit Online</p>
+      <h1>Japan Drift 1v1</h1>
+      <p class="status-line" id="net-status">Secure room setup</p>
+    </section>
+
+    <section class="panel" id="landing-panel">
+      <div class="switcher" role="tablist" aria-label="Online mode">
+        <button class="is-active" id="create-tab" type="button">Create Game</button>
+        <button id="join-tab" type="button">Join Game</button>
+      </div>
+
+      <form class="stack" id="create-form">
+        <label>
+          <span>Email</span>
+          <input name="email" type="email" autocomplete="email" value="adamjaljoly@gmail.com" required />
+        </label>
+        <button class="primary" type="submit">Send OTP</button>
+      </form>
+
+      <form class="stack is-hidden" id="otp-form">
+        <label>
+          <span>OTP Code</span>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
+        </label>
+        <label>
+          <span>Driver Name</span>
+          <input name="name" maxlength="20" value="Adam" required />
+        </label>
+        <label>
+          <span>Car</span>
+          <select name="car" id="host-car"></select>
+        </label>
+        <button class="primary" type="submit">Create Session</button>
+      </form>
+
+      <form class="stack is-hidden" id="join-form">
+        <label>
+          <span>Session Code</span>
+          <input name="code" maxlength="8" autocapitalize="characters" autocomplete="off" required />
+        </label>
+        <label>
+          <span>Driver Name</span>
+          <input name="name" maxlength="20" value="Challenger" required />
+        </label>
+        <label>
+          <span>Car</span>
+          <select name="car" id="guest-car"></select>
+        </label>
+        <button class="primary" type="submit">Join Room</button>
+      </form>
+
+      <p class="message" id="message"></p>
+    </section>
+
+    <section class="panel lobby is-hidden" id="lobby-panel">
+      <div>
+        <p class="eyebrow">Session Code</p>
+        <button class="code" id="copy-code" type="button">------</button>
+      </div>
+      <div class="drivers" id="drivers"></div>
+      <div class="actions">
+        <button class="primary" id="ready-button" type="button">Ready</button>
+        <button class="secondary" id="leave-button" type="button">Leave</button>
+      </div>
+    </section>
+  </main>
+
+  <section class="race-hud is-hidden" id="race-hud">
+    <div><strong id="hud-speed">0</strong><span>km/h</span></div>
+    <div><strong id="hud-gear">G1</strong><span id="hud-rpm"></span></div>
+    <div><strong id="hud-score">0</strong><span>drift</span></div>
+    <div><strong id="hud-time">2:00</strong><span>timer</span></div>
+  </section>
+
+  <section class="countdown is-hidden" id="countdown"></section>
+
+  <section class="results is-hidden" id="results">
+    <div class="panel results-panel">
+      <p class="eyebrow">Race Result</p>
+      <h2 id="result-title">Winner</h2>
+      <div class="result-list" id="result-list"></div>
+      <button class="primary" id="back-online" type="button">Back Online</button>
+    </div>
+  </section>
+
+  <section class="touch" id="touch-controls" aria-hidden="true">
+    <div class="pad-left">
+      <button data-touch="left" type="button">L</button>
+      <button data-touch="right" type="button">R</button>
+    </div>
+    <div class="pad-right">
+      <button data-touch="brake" type="button">BRK</button>
+      <button data-touch="gas" type="button">GAS</button>
+      <button data-touch="ebrake" type="button">E</button>
+    </div>
+  </section>
+
+  <script src="/online/online.js" defer></script>
+</body>
+</html>
