@@ -18,10 +18,47 @@ button {
   inset: 0;
   width: 100vw;
   height: 100vh;
-  display: block;
+  display: none;
   touch-action: none;
+  z-index: 3;
+  background: transparent;
+  pointer-events: none;
+}
+.offline-game {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  z-index: 1;
+  background: #170b22;
+  pointer-events: none;
+}
+.engine-race #game {
+  display: block;
+}
+.fallback-canvas #game {
+  display: block;
   z-index: 0;
   background: #071013;
+  pointer-events: auto;
+}
+.fallback-canvas .offline-game {
+  display: none;
+}
+.engine-race .offline-game {
+  pointer-events: auto;
+}
+.engine-race .touch {
+  display: none !important;
+}
+.engine-race .race-hud {
+  left: auto;
+  right: max(14px, env(safe-area-inset-right));
+  grid-template-columns: auto;
+}
+.engine-race .race-hud div:not(:last-child) {
+  display: none;
 }
 .shell {
   position: fixed;
