@@ -1,0 +1,2 @@
+Pages redeploy trigger for Japan Drift online mode.
+Final app commit: bf1f5cf
