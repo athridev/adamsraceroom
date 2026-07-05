@@ -1,0 +1,519 @@
+name: Apply Japan Drift online P2P fallback
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-online-p2p-fallback.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Apply online fallback patch
+        run: |
+          cat > /tmp/japandrift-online-p2p.patch <<'PATCH'
+diff --git a/online/online.js b/online/online.js
+index 2e17884..c300b47 100644
+--- a/online/online.js
++++ b/online/online.js
+@@ -88,6 +88,13 @@ function buildTrack() {
+ 
+ const TRACK = buildTrack();
+ const CAR_BY_ID = Object.fromEntries(CARS.map((car) => [car.id, car]));
++const ADMIN_EMAIL = "adamjaljoly@gmail.com";
++const P2P_RACE_DURATION_MS = 120000;
++const PEERJS_URLS = [
++  "https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js",
++  "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js",
++];
++let peerJsPromise = null;
+ 
+ const els = {
+   cv: document.querySelector("#game"),
+@@ -160,6 +167,14 @@ const state = {
+   touch: { left: false, right: false, gas: false, brake: false, ebrake: false },
+   gamepadActive: false,
+   ready: false,
++  transport: "server",
++  p2pFallback: false,
++  p2pRole: "",
++  p2pPeer: null,
++  p2pConn: null,
++  p2pLocal: null,
++  p2pCountdownSent: false,
++  p2pResultsSent: false,
+   countdownAt: 0,
+   startedAt: 0,
+   raceDurationMs: 120000,
+@@ -177,6 +192,27 @@ function setMessage(text, isError = false) {
+   els.message.style.color = isError ? "#ff8e8e" : "#ffd166";
+ }
+ 
++function normalizeEmail(value) {
++  return String(value || "").trim().toLowerCase();
++}
++
++function canUseP2PFallback(error) {
++  const msg = String(error?.message || "");
++  return error?.status === 404
++    || /failed to fetch|networkerror|online backend is not deployed|otp email is not configured|online storage is not configured/i.test(msg);
++}
++
++function resetOtpField() {
++  const codeInput = els.otpForm.elements.code;
++  const codeLabel = codeInput?.closest("label");
++  if (codeInput) {
++    codeInput.required = true;
++    codeInput.value = "";
++    codeInput.placeholder = "";
++  }
++  codeLabel?.classList.remove("is-hidden");
++}
++
+ function api(path, options = {}) {
+   return fetch(path, {
+     credentials: "include",
+@@ -210,6 +246,8 @@ function formData(form) {
+ }
+ 
+ function showCreate() {
++  state.p2pFallback = false;
++  resetOtpField();
+   els.createTab.classList.add("is-active");
+   els.joinTab.classList.remove("is-active");
+   els.createForm.classList.remove("is-hidden");
+@@ -241,8 +279,9 @@ function showLobby(room) {
+ function renderLobby() {
+   const room = state.room;
+   if (!room) return;
++  const connected = room.players.filter((player) => player.connected).length;
+   els.copyCode.textContent = room.code;
+-  els.status.textContent = room.players.length < 2 ? "Waiting for second driver" : "Both drivers connected";
++  els.status.textContent = connected < 2 ? "Waiting for second driver" : "Both drivers connected";
+   els.drivers.innerHTML = room.players.map((player) => `
+     <div class="driver">
+       <div><strong>${escapeHtml(player.name)}</strong><span>${escapeHtml((CAR_BY_ID[player.car] || CARS[0]).name)} · ${player.connected ? "connected" : "offline"}</span></div>
+@@ -285,6 +324,10 @@ function connectSocket() {
+ }
+ 
+ function sendWs(payload) {
++  if (state.transport === "p2p") {
++    sendP2P(payload);
++    return;
++  }
+   if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+     state.socket.send(JSON.stringify(payload));
+   }
+@@ -295,6 +338,7 @@ function handleWs(msg) {
+     state.serverOffset = Number(msg.serverTime || Date.now()) - Date.now();
+     return;
+   }
++  if (msg.serverTime) state.serverOffset = Number(msg.serverTime) - Date.now();
+   if (msg.room) state.room = msg.room;
+   if (msg.type === "hello") {
+     state.room = msg.room;
+@@ -333,6 +377,292 @@ function handleWs(msg) {
+   }
+ }
+ 
++function loadPeerJs() {
++  if (window.Peer) return Promise.resolve();
++  if (peerJsPromise) return peerJsPromise;
++  peerJsPromise = PEERJS_URLS.reduce((chain, url) => chain.catch(() => new Promise((resolve, reject) => {
++    const script = document.createElement("script");
++    script.src = url;
++    script.async = true;
++    script.onload = () => window.Peer ? resolve() : reject(new Error("PeerJS did not load."));
++    script.onerror = () => reject(new Error("PeerJS CDN failed."));
++    document.head.append(script);
++  })), Promise.reject()).catch((error) => {
++    peerJsPromise = null;
++    throw error;
++  });
++  return peerJsPromise;
++}
++
++function makeSessionCode() {
++  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
++  let out = "JD";
++  const values = new Uint8Array(4);
++  crypto.getRandomValues(values);
++  for (const value of values) out += chars[value % chars.length];
++  return out;
++}
++
++function p2pPeerId(code) {
++  return `japandrift-${String(code || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "")}`;
++}
++
++function openPeer(id) {
++  return new Promise((resolve, reject) => {
++    const peer = id ? new Peer(id, { debug: 0 }) : new Peer({ debug: 0 });
++    let settled = false;
++    const timer = setTimeout(() => fail(new Error("Peer service did not answer.")), 12000);
++    function fail(error) {
++      if (settled) return;
++      settled = true;
++      clearTimeout(timer);
++      try { peer.destroy(); } catch {}
++      reject(error);
++    }
++    peer.on("open", () => {
++      if (settled) return;
++      settled = true;
++      clearTimeout(timer);
++      resolve(peer);
++    });
++    peer.on("error", fail);
++  });
++}
++
++function p2pPlayer(id, name, car, connected = true) {
++  return { id, name: String(name || (id === "p1" ? "Host" : "Challenger")).slice(0, 20), car: car || (id === "p1" ? "s15" : "fd"), connected, ready: false, score: 0, progress: 0, finished: false };
++}
++
++function setP2PGuest(player = {}) {
++  if (!state.room) return;
++  const guest = state.room.players.find((p) => p.id === "p2");
++  if (!guest) return;
++  Object.assign(guest, p2pPlayer("p2", player.name || guest.name, player.car || guest.car, true));
++  renderLobby();
++}
++
++function p2pSendRaw(payload) {
++  if (state.p2pConn?.open) state.p2pConn.send(payload);
++}
++
++function sendP2P(payload) {
++  if (state.p2pRole === "host") {
++    handleP2PFrom("p1", payload);
++    return;
++  }
++  p2pSendRaw(payload);
++}
++
++function p2pBroadcast(type = "presence") {
++  if (!state.room) return;
++  const packet = { type, room: state.room, players: state.room.players, serverTime: Date.now() };
++  if (state.p2pRole === "host") p2pSendRaw(packet);
++  handleWs(packet);
++}
++
++function p2pUpdatePlayer(playerId, data = {}) {
++  const player = state.room?.players.find((p) => p.id === playerId);
++  if (!player) return null;
++  if (typeof data.score === "number") player.score = data.score;
++  if (typeof data.progress === "number") player.progress = data.progress;
++  if (typeof data.remainingMs === "number") player.remainingMs = data.remainingMs;
++  if (data.finishedAt || data.finished) player.finished = true;
++  return player;
++}
++
++function p2pMaybeCountdown() {
++  if (state.p2pRole !== "host" || state.p2pCountdownSent || !state.room) return;
++  const ready = state.room.players.length >= 2 && state.room.players.every((player) => player.connected && player.ready);
++  if (!ready) return;
++  state.p2pCountdownSent = true;
++  const now = Date.now();
++  const packet = {
++    type: "countdown",
++    room: state.room,
++    countdownAt: now + 800,
++    startedAt: now + 3800,
++    serverTime: now,
++  };
++  p2pSendRaw(packet);
++  handleWs(packet);
++}
++
++function p2pShowResults(forcedWinnerId = "") {
++  if (state.p2pResultsSent || !state.room) return;
++  state.p2pResultsSent = true;
++  const players = state.room.players.map((player) => ({
++    id: player.id,
++    name: player.name,
++    score: Number(player.score || 0),
++    progress: Number(player.progress || 0),
++    connected: player.connected,
++  }));
++  const winner = forcedWinnerId
++    ? players.find((player) => player.id === forcedWinnerId)
++    : players.slice().sort((a, b) => (b.score - a.score) || (b.progress - a.progress))[0];
++  const result = { winnerId: winner?.id || "", players };
++  p2pSendRaw({ type: "results", result, serverTime: Date.now() });
++  showResults(result);
++}
++
++function p2pMaybeResults() {
++  if (state.p2pRole !== "host" || !state.room) return;
++  const allFinished = state.room.players.every((player) => player.finished);
++  if (allFinished) p2pShowResults();
++}
++
++function handleP2PFrom(playerId, msg) {
++  if (!msg || !state.room) return;
++  if (msg.type === "join") {
++    setP2PGuest(msg.player || {});
++    p2pBroadcast("hello");
++    return;
++  }
++  if (msg.type === "ping") {
++    p2pSendRaw({ type: "pong", serverTime: Date.now(), clientTime: msg.clientTime });
++    return;
++  }
++  if (msg.type === "ready") {
++    const player = state.room.players.find((p) => p.id === playerId);
++    if (player) player.ready = true;
++    p2pBroadcast("ready");
++    p2pMaybeCountdown();
++    return;
++  }
++  if (msg.type === "state") {
++    if (playerId === state.playerId) {
++      p2pSendRaw({ type: "state", playerId, state: msg.state });
++    } else {
++      handleWs({ type: "state", playerId, state: msg.state });
++    }
++    return;
++  }
++  if (msg.type === "score") {
++    const score = { score: Number(msg.score || 0), progress: Number(msg.progress || 0), finishedAt: msg.finishedAt || null, remainingMs: msg.remainingMs };
++    p2pUpdatePlayer(playerId, score);
++    p2pSendRaw({ type: "score", playerId, score, serverTime: Date.now() });
++    return;
++  }
++  if (msg.type === "finish") {
++    p2pUpdatePlayer(playerId, { score: Number(msg.score || 0), progress: Number(msg.progress || 0), remainingMs: msg.remainingMs, finished: true });
++    p2pSendRaw({ type: "player-finished", playerId, serverTime: Date.now() });
++    p2pMaybeResults();
++  }
++}
++
++function handleP2PMessage(msg) {
++  if (state.p2pRole === "host") {
++    handleP2PFrom("p2", msg);
++    return;
++  }
++  if (msg.type === "reject") {
++    setMessage(msg.reason || "Room is full.", true);
++    return;
++  }
++  handleWs(msg);
++}
++
++function handleP2PDisconnect() {
++  if (!state.room || state.mode === "results") return;
++  const remoteId = state.playerId === "p1" ? "p2" : "p1";
++  const remote = state.room.players.find((player) => player.id === remoteId);
++  if (remote) remote.connected = false;
++  if (state.mode === "lobby") {
++    renderLobby();
++    els.status.textContent = "Opponent disconnected";
++  }
++  if (state.mode === "race") {
++    els.status.textContent = "Opponent disconnected";
++    if (state.p2pRole === "host") p2pShowResults(state.playerId);
++    else showResults({ winnerId: state.playerId, players: state.room.players.map((player) => ({ ...player, score: Number(player.score || 0) })) });
++  }
++}
++
++function setupP2PConnection(conn) {
++  state.p2pConn = conn;
++  conn.on("open", () => {
++    els.status.textContent = "Peer connected";
++    if (state.p2pRole === "host") {
++      setP2PGuest(conn.metadata || {});
++      p2pBroadcast("hello");
++    } else {
++      p2pSendRaw({ type: "join", player: state.p2pLocal });
++      p2pSendRaw({ type: "ping", clientTime: Date.now() });
++    }
++  });
++  conn.on("data", handleP2PMessage);
++  conn.on("close", handleP2PDisconnect);
++  conn.on("error", () => {
++    setMessage("Peer connection dropped.", true);
++    handleP2PDisconnect();
++  });
++}
++
++async function createP2PRoom({ name, car }) {
++  await loadPeerJs();
++  state.transport = "p2p";
++  state.p2pRole = "host";
++  state.playerId = "p1";
++  state.playerToken = "p2p-host";
++  state.p2pLocal = p2pPlayer("p1", name, car, true);
++  state.ready = false;
++  state.p2pCountdownSent = false;
++  state.p2pResultsSent = false;
++  state.serverOffset = 0;
++  let peer = null, code = "";
++  for (let attempt = 0; attempt < 4; attempt++) {
++    code = makeSessionCode();
++    try {
++      peer = await openPeer(p2pPeerId(code));
++      break;
++    } catch (error) {
++      if (!/unavailable|taken|id/i.test(String(error?.message || error))) throw error;
++    }
++  }
++  if (!peer) throw new Error("Could not reserve a peer room code.");
++  state.p2pPeer = peer;
++  state.room = {
++    code,
++    raceDurationMs: P2P_RACE_DURATION_MS,
++    players: [state.p2pLocal, p2pPlayer("p2", "Waiting", "fd", false)],
++  };
++  peer.on("connection", (conn) => {
++    if (state.p2pConn?.open) {
++      conn.on("open", () => conn.send({ type: "reject", reason: "Room already has two drivers." }));
++      setTimeout(() => conn.close(), 400);
++      return;
++    }
++    setupP2PConnection(conn);
++  });
++  peer.on("error", (error) => setMessage(error.message || "Peer service error.", true));
++  showLobby(state.room);
++  els.status.textContent = "Share this code with your friend";
++}
++
++async function joinP2PRoom({ code, name, car }) {
++  await loadPeerJs();
++  state.transport = "p2p";
++  state.p2pRole = "guest";
++  state.playerId = "p2";
++  state.playerToken = "p2p-guest";
++  state.p2pLocal = p2pPlayer("p2", name, car, true);
++  state.ready = false;
++  state.p2pCountdownSent = false;
++  state.p2pResultsSent = false;
++  const cleanCode = String(code || "").trim().toUpperCase();
++  const peer = await openPeer();
++  state.p2pPeer = peer;
++  state.room = {
++    code: cleanCode,
++    raceDurationMs: P2P_RACE_DURATION_MS,
++    players: [p2pPlayer("p1", "Host", "s15", true), state.p2pLocal],
++  };
++  showLobby(state.room);
++  els.status.textContent = "Connecting to peer room";
++  const conn = peer.connect(p2pPeerId(cleanCode), { reliable: false, metadata: { name: state.p2pLocal.name, car: state.p2pLocal.car } });
++  setupP2PConnection(conn);
++}
++
+ function nearestSample(x, y, from = TRACK.startIdx, win = 64) {
+   let bi = from, bd = Infinity;
+   for (let k = -win; k <= win; k++) {
+@@ -517,6 +847,8 @@ function startRace() {
+   state.car = spawnCar(CAR_BY_ID[myPlayer?.car] || CARS[1], state.playerId === "p1" ? -28 : 28);
+   state.remote = spawnCar(CAR_BY_ID[remotePlayer?.car] || CARS[2], state.playerId === "p1" ? 28 : -28);
+   state.remote.name = remotePlayer?.name || "Opponent";
++  state.remoteHistory = [];
++  accumulator = 0;
+   state.mode = "race";
+   state.sentFinish = false;
+   state.sentTimerFinish = false;
+@@ -734,6 +1066,8 @@ els.joinTab.addEventListener("click", showJoin);
+ 
+ els.createForm.addEventListener("submit", async (event) => {
+   event.preventDefault();
++  resetOtpField();
++  state.p2pFallback = false;
+   setMessage("Sending code...");
+   try {
+     const result = await api("/api/online/request-otp", {
+@@ -745,6 +1079,21 @@ els.createForm.addEventListener("submit", async (event) => {
+     els.otpForm.classList.remove("is-hidden");
+     setMessage(result.devCode ? `Local dev OTP: ${result.devCode}` : `Code sent to ${result.sentTo}.`);
+   } catch (error) {
++    const email = normalizeEmail(formData(els.createForm).email);
++    if (canUseP2PFallback(error) && email === ADMIN_EMAIL) {
++      state.transport = "p2p";
++      state.p2pFallback = true;
++      state.challengeId = "p2p";
++      const codeInput = els.otpForm.elements.code;
++      codeInput.required = false;
++      codeInput.value = "P2P";
++      codeInput.closest("label")?.classList.add("is-hidden");
++      els.createForm.classList.add("is-hidden");
++      els.otpForm.classList.remove("is-hidden");
++      els.status.textContent = "Peer-to-peer room setup";
++      setMessage("Vercel OTP is not available here. Choose your driver and create a peer room now.");
++      return;
++    }
+     setMessage(error.message, true);
+   }
+ });
+@@ -754,6 +1103,11 @@ els.otpForm.addEventListener("submit", async (event) => {
+   setMessage("Verifying...");
+   const otp = formData(els.otpForm);
+   try {
++    if (state.p2pFallback) {
++      setMessage("Creating peer room...");
++      await createP2PRoom({ name: otp.name, car: otp.car });
++      return;
++    }
+     await api("/api/online/verify-otp", {
+       method: "POST",
+       body: JSON.stringify({
+@@ -786,10 +1140,11 @@ els.otpForm.addEventListener("submit", async (event) => {
+ els.joinForm.addEventListener("submit", async (event) => {
+   event.preventDefault();
+   setMessage("Joining room...");
++  const join = formData(els.joinForm);
+   try {
+     const result = await api("/api/online/join-room", {
+       method: "POST",
+-      body: JSON.stringify(formData(els.joinForm)),
++      body: JSON.stringify(join),
+     });
+     state.playerId = result.playerId;
+     state.playerToken = result.playerToken;
+@@ -797,6 +1152,16 @@ els.joinForm.addEventListener("submit", async (event) => {
+     showLobby(result.room);
+     connectSocket();
+   } catch (error) {
++    if (canUseP2PFallback(error)) {
++      try {
++        setMessage("Connecting peer-to-peer...");
++        await joinP2PRoom(join);
++        return;
++      } catch (peerError) {
++        setMessage(peerError.message || "Peer room not found.", true);
++        return;
++      }
++    }
+     setMessage(error.message, true);
+   }
+ });
+diff --git a/vercel.json b/vercel.json
+index 9b9b922..a9860ff 100644
+--- a/vercel.json
++++ b/vercel.json
+@@ -21,7 +21,7 @@
+         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+         {
+           "key": "Content-Security-Policy",
+-          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' wss: ws:; upgrade-insecure-requests"
++          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://0.peerjs.com wss: ws:; upgrade-insecure-requests"
+         },
+         { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" },
+         { "key": "X-Frame-Options", "value": "DENY" },
+PATCH
+          git apply /tmp/japandrift-online-p2p.patch
+      - name: Remove temporary workflow and commit
+        run: |
+          rm -f .github/workflows/apply-online-p2p-fallback.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add online/online.js vercel.json .github/workflows/apply-online-p2p-fallback.yml
+          git commit -m "Add P2P fallback for Japan Drift online"
+          git push
