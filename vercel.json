@@ -4,6 +4,8 @@
   "trailingSlash": false,
   "rewrites": [
     { "source": "/japandrift/online", "destination": "/online/index.html" },
+    { "source": "/japandrift/online/styles.css", "destination": "/online/styles.css" },
+    { "source": "/japandrift/online/online.js", "destination": "/online/online.js" },
     { "source": "/japandrift/online/:path*", "destination": "/online/index.html" }
   ],
   "functions": {
