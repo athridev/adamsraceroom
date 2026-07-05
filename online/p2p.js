@@ -7,6 +7,18 @@
     "https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js",
     "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js",
   ];
+  const PEER_OPTIONS = {
+    debug: 0,
+    config: {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+        { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+      ],
+    },
+  };
 
   const shouldUseP2P = () => location.hostname.endsWith("github.io") || new URLSearchParams(location.search).has("p2p");
   if (!shouldUseP2P()) return;
@@ -20,6 +32,7 @@
     local: null,
     remoteMeta: null,
     reverseStarted: false,
+    fallbackTimer: null,
     outbox: [],
     joinAck: false,
     joinLoopStarted: false,
@@ -84,7 +97,7 @@
 
   function openPeer(id) {
     return new Promise((resolve, reject) => {
-      const peer = id ? new Peer(id, { debug: 0 }) : new Peer({ debug: 0 });
+      const peer = id ? new Peer(id, PEER_OPTIONS) : new Peer(PEER_OPTIONS);
       let settled = false;
       const timer = setTimeout(() => fail(new Error("Peer service did not answer.")), 12000);
       function fail(error) {
@@ -121,6 +134,8 @@
     p2p.sendConn = null;
     p2p.remoteMeta = null;
     p2p.reverseStarted = false;
+    clearTimeout(p2p.fallbackTimer);
+    p2p.fallbackTimer = null;
     p2p.outbox = [];
     p2p.joinAck = false;
     p2p.joinLoopStarted = false;
@@ -134,13 +149,27 @@
   function trySendRaw(payload) {
     const conns = [p2p.sendConn, p2p.conn].filter((conn, index, list) => conn && list.indexOf(conn) === index);
     for (const conn of conns) {
-      if (!conn.open && !(conn === p2p.conn && p2p.connectionOpen)) continue;
+      if (!conn.open && !p2p.connectionOpen) continue;
       try {
         conn.send(payload);
         return true;
       } catch {}
     }
     return false;
+  }
+
+  function sendEverywhere(payload) {
+    const conns = [p2p.sendConn, p2p.conn].filter((conn, index, list) => conn && list.indexOf(conn) === index);
+    let sent = false;
+    for (const conn of conns) {
+      if (!conn.open && !p2p.connectionOpen) continue;
+      try {
+        conn.send(payload);
+        sent = true;
+      } catch {}
+    }
+    if (!sent) enqueueRaw(payload);
+    return sent;
   }
 
   function enqueueRaw(payload) {
@@ -177,12 +206,34 @@
   }
 
   function sendLobbyReliable(payload) {
-    sendRaw(payload);
-    [300, 900, 1800].forEach((delay) => {
+    sendEverywhere(payload);
+    [250, 600, 1200, 2400, 3600].forEach((delay) => {
       setTimeout(() => {
-        if (state.mode === "lobby" && !p2p.countdownSent) sendRaw(payload);
+        if (state.mode === "lobby" && !p2p.countdownSent) sendEverywhere(payload);
       }, delay);
     });
+  }
+
+  function scheduleReadyFallback() {
+    clearTimeout(p2p.fallbackTimer);
+    p2p.fallbackTimer = setTimeout(() => {
+      if (state.mode !== "lobby" || !state.ready || !state.room || state.room.players.length < 2) return;
+      for (const player of state.room.players) {
+        if (player.connected) player.ready = true;
+      }
+      if (typeof renderLobby === "function") renderLobby();
+      const now = Date.now();
+      const packet = {
+        type: "countdown",
+        room: state.room,
+        countdownAt: now + 800,
+        startedAt: now + 3800,
+        serverTime: now,
+      };
+      if (p2p.role === "host") p2p.countdownSent = true;
+      sendEverywhere(packet);
+      handleWs(packet);
+    }, 4500);
   }
 
   function sendGuestJoin() {
@@ -257,6 +308,7 @@
     if (p2p.role !== "host" || p2p.countdownSent || !state.room) return;
     const ready = state.room.players.length >= 2 && state.room.players.every((player) => player.connected && player.ready);
     if (!ready) return;
+    clearTimeout(p2p.fallbackTimer);
     p2p.countdownSent = true;
     const now = Date.now();
     const packet = {
@@ -504,6 +556,7 @@
     event.currentTarget.textContent = "Ready";
     if (p2p.role === "host") handleFrom("p1", { type: "ready" });
     else sendLobbyReliable({ type: "ready" });
+    scheduleReadyFallback();
   }, true);
 
   createForm?.addEventListener("submit", (event) => {
