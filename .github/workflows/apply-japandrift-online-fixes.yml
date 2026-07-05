@@ -1,6 +1,5 @@
 name: Apply Japan Drift Online Fixes
 
-# Triggered once after workflow creation.
 on:
   push:
     paths:
@@ -17,13 +16,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply online race fixes
+      - name: Load and apply saved fix patch
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/japandrift-online-fixes.patch.gz.b64 <<'PATCH_B64'
-H4sICMiySWoAA2phcGFuZHJpZnQtb25saW5lLWZpeGVzLnBhdGNoAL1WW3PiNhR+96848cOOPRjHkEBYKNvNNJM2M5vZTLIzfRa2DG6N5Ury0swu/71Hko1lA5ltH8oDxkfn8n1H50KSpSkMh+tMArkkZXbJijwr6OVOhH8IWB2JnKxI6N8Qj+Lk+n0ahvRqNr1JRzCKoun1tTMcDk/4cQaDwSlfHz/CcDoNpjDA79EM8D2tilhmrIBdVhSU33O29Thj2wDy7CsNgFMiWOHDNwcA9gsH9g44g4MVp6LK5T3jd5mIGXqIZcc8OYhp8pSTV8ofEuVsAIByIYGVJStoIWEJyi4stZIIU+TteebNh+UHMD/DLIGL5fK030Xr1j7/F66XP+DaUEanZzLmtg5cY5el4DU8/do+NNYPCl1zhggO+jaKOmENgJwJyhUp4+g/0EKZQWZiaYe+8Rv2Mid5RbXqXn1xKive3DqKUegAEa9F3BZSiWAyIZ9QiRYxtXJTV5FhUbAdui/oDu6IpJ4fSvbw8vlF8qxYe4gOFVPGwTPahguwtHOVyqGq6fHVSBX1+PoqGF+pqt4JEbLCc2smCMsNapyeYPGfVKrK/quiQupUaVzmU7ueQ1mt8ix+xnBejgiFVD/9JnTQWOwN1jpBdUKRbCgk4ZjDWwnv3sGFFlHs5fY2AQSVX7ItZZX0anA1mkGDpvWmUYtwQ0R9x6qRvn8H27G5nkVrXlcsAr9NJeW/chJTzDrZEZw/a6opYYYT6i+6MS96NhioK1H0ZCV0abk6vHs2fq/HLSc/2O1lpw0tlHZX9UK3ebGr2HzOUGmInNfU57fyzcLtJ78ZF+dGZeu+mSCn6PaAWNOjN0/O2xjFZz3QWzsz4C0rUxynuriP1Ma34owkMRHSMxy+gXwt6RxcE0a4QR0w0LA67dX17euWqh3vA5hFUdQI9k7TcfrLSextWq868zDbtC+qt+l4NZ6QdByGV2RFSRp3t+mRkdmmR2I1eUbTazV51ONGDR5z56qgVJ/psXKYA3OI9NRQJO8qTtRYesRBMxojQ3OEuZb3WZGJzRxSkgsaKN5KquYE7x2pKseMv6hoL1iaTQAtjBk/Ej5hiep3BX0S6X8Ck+jGQD8McA34GUF6/oGBVOWzZfgoyJbq6lFvZj/+bIQ4I9zPdUO6i9Zwi/NFNZfibctbsniqKelbbg8tzq0GmtNchGJD8zyMkZX4hHUakiTx3EwMN1mS0ML1D4qbKrHUFOyv9LRmXalvOtX/oCazYBSp/1BRMJp0UpczVnq42fx2o1Rlgnx+qxIPYxMkU6wfRbMzzBhTq3BY8+5cKHyASeSr+0+0TLt+27S5djQdH2yVUKmqHrQxDK1RenQnuLVsyPDTEiJ1x0YxJjwsOVtj0gTGisL3s4lvrbazPt8wt9fwiRIxQ7zVQGa/C+8waFKth3NGKLpzeCRyE3JW4WZpY+ozH0dsHXt+Ak8nS+1+P2x4Q+4oNWrLn6xd317o56q7t6HO0h/8v/RxWnTGsWM/Ek52vxDu2fMh0DibnHU1MEpg2hjP/wHKnRyhCQ0AAA==
-PATCH_B64
+          curl -fsSL "https://raw.githubusercontent.com/athridev/japandrift/a342ecd2bcf2c4a66fc9d63c5af2bf7528b4fec5/.github/workflows/apply-japandrift-online-fixes.yml" > /tmp/source-workflow.yml
+          awk "found && /^PATCH_B64$/ {exit} found {print} /<<'PATCH_B64'/ {found=1}" /tmp/source-workflow.yml > /tmp/japandrift-online-fixes.patch.gz.b64
+          test -s /tmp/japandrift-online-fixes.patch.gz.b64
           base64 -d /tmp/japandrift-online-fixes.patch.gz.b64 | gunzip > /tmp/japandrift-online-fixes.patch
           git apply --index --whitespace=nowarn /tmp/japandrift-online-fixes.patch
           rm -f .github/workflows/apply-japandrift-online-fixes.yml
