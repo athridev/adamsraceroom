@@ -218,7 +218,8 @@ const CARS = [
       turn: 3.0, driftTurn: 2.35, slideYaw: 0.95,
       kick: 0.12, driftFriction: 0.16
     },
-    eng: { base: 58, mul: 3.5, waves: ['square', 'sawtooth'], det: 9, filt: 3100, sub: 0.28, turbo: 0, pops: 0.35 }
+    eng: { base: 58, mul: 3.5, waves: ['square', 'sawtooth'], det: 9, filt: 3100, sub: 0.28, turbo: 0, pops: 0.35,
+           harm: [0, 1, 0.55, 0.20, 0.42, 0.10, 0.16, 0.06, 0.08] }   // 4A-GE: bright ITB four, strong 2nd order
   },
   {
     id: 's15', name: 'S-15', jp: 'エス・フィフティーン', tag: 'TURBO DRIFT SPEC · 横向き純正',
@@ -231,7 +232,8 @@ const CARS = [
       turn: 2.8, driftTurn: 2.1, slideYaw: 1.05,
       kick: 0.12, driftFriction: 0.28
     },
-    eng: { base: 50, mul: 3.2, waves: ['sawtooth', 'square'], det: 6, filt: 2500, sub: 0.34, turbo: 0.85, pops: 0.5 }
+    eng: { base: 50, mul: 3.2, waves: ['sawtooth', 'square'], det: 6, filt: 2500, sub: 0.34, turbo: 0.85, pops: 0.5,
+           harm: [0, 1, 0.72, 0.22, 0.30, 0.12, 0.10, 0.05, 0.04] }   // SR20DET: muffled turbo four
   },
   {
     id: 'fd', name: 'FD-3S', jp: 'エフディー', tag: 'TWIN ROTOR · 回転の悪魔',
@@ -244,7 +246,8 @@ const CARS = [
       turn: 3.05, driftTurn: 2.2, slideYaw: 1.2,
       kick: 0.14, driftFriction: 0.40
     },
-    eng: { base: 86, mul: 3.8, waves: ['sawtooth', 'sawtooth'], det: 17, filt: 3400, sub: 0.18, turbo: 0.7, pops: 0.6, rotary: true }
+    eng: { base: 86, mul: 3.8, waves: ['sawtooth', 'sawtooth'], det: 17, filt: 3400, sub: 0.18, turbo: 0.7, pops: 0.6, rotary: true,
+           harm: [0, 1, 0.45, 0.60, 0.35, 0.40, 0.25, 0.28, 0.18] }   // 13B: dense buzzy spectrum, the brap
   },
   {
     id: 'r34', name: 'R-34', jp: 'アール・サンヨン', tag: 'AWD MONSTER · 湾岸の怪物',
@@ -257,7 +260,8 @@ const CARS = [
       turn: 2.6, driftTurn: 1.8, slideYaw: 0.8,
       kick: 0.10, driftFriction: 0.30
     },
-    eng: { base: 42, mul: 3.0, waves: ['sawtooth', 'square'], det: 5, filt: 2250, sub: 0.42, turbo: 1.0, pops: 0.4 }
+    eng: { base: 42, mul: 3.0, waves: ['sawtooth', 'square'], det: 5, filt: 2250, sub: 0.42, turbo: 1.0, pops: 0.4,
+           harm: [0, 1, 0.35, 0.80, 0.20, 0.30, 0.45, 0.12, 0.10] }   // RB26: creamy I6, 3rd/6th-order firing
   },
   {
     id: 'a80', name: 'A-80', jp: 'エー・ハチマル', tag: 'BIG SINGLE TURBO · 直6の暴力',
@@ -270,7 +274,8 @@ const CARS = [
       turn: 2.55, driftTurn: 1.95, slideYaw: 1.1,
       kick: 0.13, driftFriction: 0.34
     },
-    eng: { base: 40, mul: 2.9, waves: ['sawtooth', 'square'], det: 4, filt: 2100, sub: 0.46, turbo: 1.0, pops: 1.0 }
+    eng: { base: 40, mul: 2.9, waves: ['sawtooth', 'square'], det: 4, filt: 2100, sub: 0.46, turbo: 1.0, pops: 1.0,
+           harm: [0, 1, 0.42, 0.85, 0.25, 0.20, 0.50, 0.10, 0.14] }   // 2JZ: I6 firing order with a heavier bottom end
   }
 ];
 
@@ -782,7 +787,19 @@ function startGame() {
         this.shaper.curve = curve;
         this.engFilt = c.createBiquadFilter(); this.engFilt.type = 'lowpass';
         this.engFilt.frequency.value = 800; this.engFilt.Q.value = 1.1;
-        this.engFilt.connect(this.shaper); this.shaper.connect(this.engGain);
+        // throttle-load drive stage: harder into the shaper under load,
+        // so wide-open throttle actually snarls instead of just louder
+        this.drive = c.createGain(); this.drive.gain.value = 1;
+        this.engFilt.connect(this.drive); this.drive.connect(this.shaper);
+        // idle lope / firing-beat AM: LFO into a unity gain node — deep
+        // slow cam-lope at idle, tightens into a fast beat as revs rise
+        this.lopeG = c.createGain(); this.lopeG.gain.value = 1;
+        this.shaper.connect(this.lopeG); this.lopeG.connect(this.engGain);
+        this.lope = c.createOscillator(); this.lope.type = 'sine';
+        this.lope.frequency.value = 11;
+        this.lopeDepth = c.createGain(); this.lopeDepth.gain.value = 0;
+        this.lope.connect(this.lopeDepth); this.lopeDepth.connect(this.lopeG.gain);
+        this.lope.start();
         this.engGain.connect(this.master);
         this.osc1 = c.createOscillator(); this.osc2 = c.createOscillator();
         this.oscSub = c.createOscillator(); this.oscSub.type = 'sine';
@@ -861,10 +878,25 @@ function startGame() {
       if (!this.ok && !this.ctx) return;
       this.car = spec.eng;
       try {
-        this.osc1.type = spec.eng.waves[0];
-        this.osc2.type = spec.eng.waves[1];
-        this.osc2.detune.value = spec.eng.det;
-        this.osg.gain.value = spec.eng.sub;
+        const E = spec.eng;
+        if (E.harm) {
+          // per-engine harmonic spectrum (I4 / I6 / rotary firing orders)
+          // — far closer to a real exhaust note than stock osc shapes
+          const n = E.harm.length;
+          const real = new Float32Array(n), imag = new Float32Array(n);
+          for (let i = 0; i < n; i++) imag[i] = E.harm[i];
+          const wave = this.ctx.createPeriodicWave(real, imag);
+          this.osc1.setPeriodicWave(wave);
+          this.osc2.setPeriodicWave(wave);
+        } else {
+          this.osc1.type = E.waves[0];
+          this.osc2.type = E.waves[1];
+        }
+        this.osc2.detune.value = E.det;
+        this.osg.gain.value = E.sub;
+        // rotary breathes through the exhaust — more rasp, faster noise
+        this.exGain.gain.value = E.rotary ? 0.24 : 0.16;
+        this.ex.playbackRate.value = E.rotary ? 1.2 : 0.9;
         this.boost = 0;
       } catch (e) {}
     },
@@ -903,6 +935,14 @@ function startGame() {
         this.tg(this.osc1.detune, Math.sin(performance.now() * 0.013) * (9 - this.rpm * 5), 0.05);
       }
       const thr = playing && car ? car.inThr : 0;
+      // load drive: throttle + revs push the shaper harder — snarl, not
+      // just volume. Idle lope: deep slow AM at low rpm that tightens
+      // into a firing-frequency beat as revs climb (rotary beats harder)
+      this.tg(this.drive.gain, 0.75 + thr * 0.85 + this.rpm * 0.25, 0.08);
+      const lopeD = Math.pow(clamp(1.15 - this.rpm * 1.6, 0, 1), 2) * 0.26
+        + thr * 0.05 * (E && E.rotary ? 1.8 : 1);
+      this.tg(this.lopeDepth.gain, lopeD, 0.15);
+      this.tg(this.lope.frequency, 7 + this.rpm * 34, 0.1);
       // upshift ignition cut: gain slams to 12% for the first ~100 ms
       const cut = (this.shiftDir > 0 && this.shiftT > 0.1) ? 0.12 : 1;
       this.tg(this.engGain.gain, playing ? (0.05 + this.rpm * 0.052 + thr * 0.014) * cut : 0,
@@ -920,7 +960,8 @@ function startGame() {
         const bT = tAmt > 0 ? thr * tAmt * clamp(this.rpm * 1.5, 0, 1) : 0;
         const tau = bT > this.boost ? 0.45 : 0.12;
         this.boost += (bT - this.boost) * clamp(dt / tau, 0, 1);
-        const whF = 750 + this.boost * 4400;
+        // turbo speed follows exhaust flow: revs carry it, boost screams it
+        const whF = 620 + (0.4 * clamp(this.rpm, 0, 1.1) + 0.6 * this.boost) * 4300;
         this.tg(this.tOsc.frequency, whF, 0.08);
         this.tg(this.tOsc2.frequency, whF * 1.004, 0.08);
         // whine emerges non-linearly — quiet spool, screaming top-end
@@ -2280,6 +2321,24 @@ function startGame() {
       g.bezierCurveTo(13.2, -9.6, 17.4, -8.9, 21.6, -6.8);
     }
   }
+  // chassis stance per model: wheelbase x-positions, half-track, wheel
+  // half-length, rim colour — AE86 narrow on Watanabe-style silvers, FD
+  // on bronze, R34/A80 wide with big rims. Sells the stance top-down.
+  const CHASSIS = {
+    ae86: { wb: [12.8, -13.0], tr: 8.3, wr: 3.9, ww: 2.2, rim: '#d3d6da' },
+    s15:  { wb: [13.3, -13.5], tr: 8.7, wr: 4.2, ww: 2.4, rim: '#aeb4bd' },
+    fd:   { wb: [13.2, -13.7], tr: 8.8, wr: 4.3, ww: 2.4, rim: '#b48a4f' },
+    r34:  { wb: [13.8, -14.1], tr: 9.3, wr: 4.6, ww: 2.6, rim: '#8f97a3' },
+    a80:  { wb: [13.7, -14.1], tr: 9.1, wr: 4.5, ww: 2.6, rim: '#c2c7ce' }
+  };
+  // panel cutlines per model: hood seam, rear deck seam, door edges
+  const PANEL_CUTS = {
+    ae86: { hood: 11.0, deck: -15.6, doors: [5.4, -7.2] },
+    s15:  { hood: 10.2, deck: -16.2, doors: [4.8, -7.8] },
+    fd:   { hood: 9.6,  deck: -15.8, doors: [4.4, -7.4] },
+    r34:  { hood: 11.4, deck: -16.4, doors: [5.4, -8.0] },
+    a80:  { hood: 10.4, deck: -16.0, doors: [4.6, -7.8] }
+  };
   // greenhouse geometry per model
   const HOUSE = {
     ae86: { x0: -15.1, x1: 8.3, hw: 8.4, r: 3.1, rx0: -6.7, rx1: 3.1, rhw: 7.4 },
@@ -2297,9 +2356,31 @@ function startGame() {
   }
   function deckDetails(g, spec, brakeCol, brakeGlow) {
     const id = spec.id;
-    g.save(); g.globalAlpha = 0.12; g.fillStyle = '#fff';
-    g.beginPath(); g.ellipse(1.8, 0, 16, 4.1, 0, 0, TAU); g.fill();
+    // dusk-sky specular: a hard streak off-centre plus a faint counter
+    // streak — reads as curved sheet metal, not a flat sticker. Curvier
+    // shells (FD, A80) get a wider, softer bloom.
+    const curvy = (id === 'fd' || id === 'a80') ? 1 : (id === 's15' ? 0.6 : 0.3);
+    g.save(); g.fillStyle = '#fff';
+    g.globalAlpha = 0.10 + curvy * 0.05;
+    g.beginPath(); g.ellipse(2.2, -3.4, 15.6, 2.3 + curvy * 1.2, 0.03, 0, TAU); g.fill();
+    g.globalAlpha = 0.05;
+    g.beginPath(); g.ellipse(1.0, 4.0, 13.0, 1.9 + curvy * 0.8, -0.03, 0, TAU); g.fill();
     g.restore();
+    // panel cutlines: hood + rear deck across the body, door seams on
+    // the flanks stopping at the greenhouse
+    {
+      const PC = PANEL_CUTS[id], HSd = HOUSE[id];
+      g.save(); g.strokeStyle = 'rgba(8,8,14,0.28)'; g.lineWidth = 0.55;
+      g.beginPath();
+      g.moveTo(PC.hood, -8.6); g.quadraticCurveTo(PC.hood + 1.1, 0, PC.hood, 8.6);
+      g.moveTo(PC.deck, -8.8); g.lineTo(PC.deck, 8.8);
+      for (const dx of PC.doors) {
+        g.moveTo(dx, -10.1); g.lineTo(dx, -(HSd.hw + 0.5));
+        g.moveTo(dx, 10.1); g.lineTo(dx, HSd.hw + 0.5);
+      }
+      g.stroke();
+      g.restore();
+    }
     if (id === 'ae86') {
       // panda scheme: black hood + lower stripes, pop-up seams
       g.beginPath();
@@ -2308,6 +2389,9 @@ function startGame() {
       g.fillStyle = '#17171d';
       g.fillRect(-16.2, 8.3, 27.5, 1.7);
       g.fillRect(-16.2, -10.0, 27.5, 1.7);
+      // unpainted black bumper across the nose (trueno front)
+      g.fillStyle = '#24252c';
+      rr(g, 20.9, -7.0, 1.5, 14.0, 0.7); g.fill();
       g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 0.6;
       g.strokeRect(15.4, -7.6, 4.4, 3.4); g.strokeRect(15.4, 4.2, 4.4, 3.4);
       headlight(g, 17.3, -7.0, 3.2, 3.1, '#fff1c8');
@@ -2330,6 +2414,9 @@ function startGame() {
       g.beginPath(); g.moveTo(20.8, -6.4); g.lineTo(13.9, -8.6); g.lineTo(15.4, -5.4); g.lineTo(20.4, -4.2); g.closePath(); g.fill();
       g.beginPath(); g.moveTo(20.8, 6.4); g.lineTo(13.9, 8.6); g.lineTo(15.4, 5.4); g.lineTo(20.4, 4.2); g.closePath(); g.fill();
       g.restore();
+      // tail garnish bar between the split lamps
+      g.fillStyle = 'rgba(16,18,26,0.75)';
+      rr(g, -21.9, -2.7, 1.8, 5.4, 0.6); g.fill();
       g.save(); g.shadowColor = '#ff2e44'; g.shadowBlur = brakeGlow; g.fillStyle = brakeCol;
       rr(g, -22.0, -8.0, 2.0, 5.2, 0.6); g.fill();
       rr(g, -22.0, 2.8, 2.0, 5.2, 0.6); g.fill();
@@ -2343,6 +2430,9 @@ function startGame() {
       }
       rr(g, 11.5, -1.8, 3.1, 3.6, 1.4);
       g.fillStyle = 'rgba(0,0,0,0.5)'; g.fill();
+      // full-width smoked tail lens, round lamps inside it
+      g.fillStyle = 'rgba(14,15,20,0.8)';
+      rr(g, -22.1, -7.6, 2.3, 15.2, 1.1); g.fill();
       g.save(); g.shadowColor = '#ff2e44'; g.shadowBlur = brakeGlow; g.fillStyle = brakeCol;
       for (const sy of [-1, 1]) for (const yy of [3.1, 6.2]) {
         g.beginPath(); g.arc(-21.0, yy * sy, 1.5, 0, TAU); g.fill();
@@ -2354,6 +2444,9 @@ function startGame() {
       rr(g, 13.9, -6.2, 5.0, 2.2, 0.8); g.fill();
       rr(g, 13.9, 4.0, 5.0, 2.2, 0.8); g.fill();
       rr(g, 21.0, -3.4, 1.6, 6.8, 0.6); g.fill();
+      // front splitter edge
+      g.fillStyle = 'rgba(0,0,0,0.5)';
+      rr(g, 22.0, -5.4, 0.9, 10.8, 0.4); g.fill();
       headlight(g, 18.2, -7.4, 3.6, 3.0, '#eaf4ff');
       headlight(g, 18.2, 4.4, 3.6, 3.0, '#eaf4ff');
       g.save(); g.shadowColor = '#ff2e44'; g.shadowBlur = brakeGlow; g.fillStyle = brakeCol;
@@ -2369,6 +2462,9 @@ function startGame() {
       g.moveTo(20.2, -4.6); g.lineTo(12.0, -8.2);
       g.moveTo(20.2, 4.6); g.lineTo(12.0, 8.2);
       g.stroke();
+      // power-bulge on the long hood
+      g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 1.0;
+      g.beginPath(); g.ellipse(13.6, 0, 4.6, 4.0, 0, 0, TAU); g.stroke();
       g.save(); g.shadowColor = '#ffd88a'; g.shadowBlur = 9; g.fillStyle = '#ffedc2';
       g.beginPath(); g.ellipse(18.9, -6.2, 2.4, 2.0, -0.3, 0, TAU); g.fill();
       g.beginPath(); g.ellipse(18.9, 6.2, 2.4, 2.0, 0.3, 0, TAU); g.fill();
@@ -2434,19 +2530,28 @@ function startGame() {
     g.fillStyle = 'rgba(10,6,18,0.38)';
     g.beginPath(); g.ellipse(shx, shy, 23.5, 12, 0, 0, TAU); g.fill();
 
-    // wheels (front pair steers)
+    // wheels (front pair steers): tire carcass + alloy rim + hub slot,
+    // per-car wheelbase/track/rim colour from CHASSIS for real stance
     {
+      const CH = CHASSIS[spec.id] || CHASSIS.s15;
       const off = L(1.5);
       g.save(); g.translate(off.x, off.y);
-      const wp = [[13.2, -8.8], [13.2, 8.8], [-13.8, -8.8], [-13.8, 8.8]];
+      const wp = [[CH.wb[0], -CH.tr], [CH.wb[0], CH.tr], [CH.wb[1], -CH.tr], [CH.wb[1], CH.tr]];
       for (let i = 0; i < 4; i++) {
         g.save();
         g.translate(wp[i][0], wp[i][1]);
         if (i < 2) g.rotate(steer * 0.42);
-        g.fillStyle = '#14141b';
-        g.fillRect(-4.3, -2.4, 8.6, 4.8);
-        g.fillStyle = '#2e3138';
-        g.fillRect(-1, -2.1, 2, 4.2);
+        rr(g, -CH.wr, -CH.ww, CH.wr * 2, CH.ww * 2, 1.1);
+        g.fillStyle = '#0e0e13'; g.fill();
+        // sidewall sheen on the outboard shoulder
+        g.fillStyle = 'rgba(255,255,255,0.07)';
+        g.fillRect(-CH.wr + 0.5, wp[i][1] < 0 ? -CH.ww : CH.ww - 0.7, CH.wr * 2 - 1, 0.7);
+        // alloy face
+        rr(g, -CH.wr * 0.52, -CH.ww + 0.55, CH.wr * 1.04, CH.ww * 2 - 1.1, 0.8);
+        g.fillStyle = CH.rim; g.fill();
+        // hub / spoke shadow
+        g.fillStyle = 'rgba(20,20,28,0.85)';
+        g.fillRect(-0.7, -CH.ww + 0.8, 1.4, CH.ww * 2 - 1.6);
         g.restore();
       }
       g.restore();
