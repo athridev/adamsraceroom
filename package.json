@@ -1,8 +1,0 @@
-{
-  "scripts": {
-    "check": "node -c api/online/_lib.js && node -c api/online/create-room.js && node -c api/online/join-room.js && node -c api/online/sync.js && node -c api/online/health.js && node -c online/online.js && node -c online/full-engine.js && node -c online/rtc.js"
-  },
-  "dependencies": {
-    "@vercel/blob": "^2.0.0"
-  }
-}
