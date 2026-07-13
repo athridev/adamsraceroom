@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Adam's Race Room — Ebisu × Meihan × Nordschleife</title>
-<meta name="description" content="Adam's Race Room — drift Ebisu's sakura-dusk figure-8, slide Meihan's sodium sweeper, or hunt tourist traffic on a real 1:1 Nürburgring Nordschleife. 10 machines, 3 circuits.">
+<meta name="description" content="Adam's Race Room — drift Ebisu & Meihan, hunt tourist traffic on a real 1:1 Nürburgring Nordschleife, or go free-roam in Neo City: walk, jack cars and dodge the police. 10 machines, 3 circuits + open-world city.">
 <meta property="og:title" content="Adam's Race Room">
 <meta property="og:description" content="Ebisu × Meihan × the real Nordschleife with tourist traffic. 10 machines, 3 circuits.">
 <meta property="og:type" content="website">
@@ -291,6 +291,48 @@ function buildNring() {
   return t;
 }
 
+// ---------------------------------------------- NEO CITY (open world)
+// An ORIGINAL top-down sandbox city — a Manhattan road grid with
+// procedural blocks — NOT a copy of any existing game's map. Free-roam:
+// drive your drift car, step out on foot, jack cars, and outrun the
+// police. Roads run along every multiple of BLOCK; buildings fill the
+// block interiors (one solid AABB each for clean collision).
+function buildCity() {
+  const BLOCK = 640, ROAD = 150, GN = 13, SW = 26;
+  const world = GN * BLOCK;
+  const buildings = new Map();
+  const BCOL = ['#3a3f52', '#454a5e', '#4e4660', '#38485a', '#524a48', '#46505a', '#5a5250', '#404a44'];
+  for (let i = 0; i < GN; i++) for (let j = 0; j < GN; j++) {
+    const r = h01(i * 57.1 + j * 131.7);
+    if (r < 0.12) continue;                       // open lot / plaza / park
+    const inset = 8 + h01(i * 13.3 + j * 7.7) * 22;
+    const bw = BLOCK - ROAD - 2 * SW - 2 * inset;
+    const bx = i * BLOCK + ROAD / 2 + SW + inset;
+    const by = j * BLOCK + ROAD / 2 + SW + inset;
+    const ht = 42 + h01(i * 3.3 + j * 9.1) * 130;
+    const col = BCOL[(h01(i * 2.1 + j * 5.7) * BCOL.length) | 0];
+    buildings.set(i + ',' + j, {
+      x: bx, y: by, w: bw, h: bw, ht, col, roof: shadeCol(col, 1.2),
+      lit: h01(i * 8.3 + j * 2.9)   // window-light seed
+    });
+  }
+  const cx = (GN >> 1) * BLOCK, cy = (GN >> 1) * BLOCK;   // spawn intersection
+  // minimal square "loop" so camera/silhouette helpers that read pts work
+  const pts = [], R = 200;
+  for (const [dx, dy] of [[-R, -R], [R, -R], [R, R], [-R, R]]) pts.push({ x: cx + dx, y: cy + dy, w: ROAD });
+  const N = pts.length;
+  for (let k = 0; k < N; k++) {
+    const a = pts[(k - 1 + N) % N], b = pts[(k + 1) % N], p = pts[k];
+    let tx = b.x - a.x, ty = b.y - a.y; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    p.tx = tx; p.ty = ty; p.nx = -ty; p.ny = tx; p.curv = 0; p.segLen = 1;
+    p.lx = p.x; p.ly = p.y; p.rx = p.x; p.ry = p.y;
+  }
+  return {
+    pts, N, total: 1, worldW: world, worldH: world, ox: 0, oy: 0,
+    startIdx: 0, dyn: true, city: true, BLOCK, ROAD, GN, SW, buildings, cx, cy
+  };
+}
+
 // ---------------------------------------------- track registry
 const TRACKS = {
   ebisu: {
@@ -307,6 +349,11 @@ const TRACKS = {
     name: 'NORDSCHLEIFE', jp: 'ニュルブルクリンク北コース', cat: 'gt', style: 'eifel',
     len: '20.7 km', desc: 'the Green Hell — real 1:1 layout, tourist traffic',
     build: buildNring
+  },
+  city: {
+    name: 'NEO CITY', jp: 'ネオシティ', cat: 'drift', style: 'city',
+    len: 'open world', desc: 'sandbox — walk, jack cars, dodge the heat',
+    build: buildCity
   }
 };
 const trackCache = {};
@@ -687,6 +734,16 @@ if (typeof window === 'undefined') {
     'world', Math.round(MH.worldW) + 'x' + Math.round(MH.worldH),
     'startIdx', MH.startIdx, 'bad', mBad, 'minWidth', Math.round(mMinW));
   console.log('[smoke] meihan wide-enough', mMinW >= 140);
+  // NEO CITY: grid world, buildings, spawn on a road
+  const CY = setTrack('city');
+  console.log('[smoke] city world', Math.round(CY.worldW) + 'x' + Math.round(CY.worldH),
+    'buildings', CY.buildings.size, 'block', CY.BLOCK, 'road', CY.ROAD);
+  const onRoadCenter = (() => {
+    const B = CY.BLOCK, RW = CY.ROAD, x = CY.cx, y = CY.cy;
+    const mx = ((x % B) + B) % B, my = ((y % B) + B) % B;
+    return Math.min(mx, B - mx) < RW / 2 || Math.min(my, B - my) < RW / 2;
+  })();
+  console.log('[smoke] city-spawn-on-road', onRoadCenter, 'city-has-buildings', CY.buildings.size > 80);
   console.log('[smoke] gearboxes-ok', CARS.every(c => {
     const gb = c.gearbox;
     return gb.tops.length === gb.ratios.length && gb.tops[gb.tops.length - 1] === 1;
@@ -803,7 +860,8 @@ function startGame() {
     Space: 'eb', ShiftLeft: 'eb', ShiftRight: 'eb',
     Enter: 'enter', Escape: 'esc', KeyP: 'esc',
     KeyR: 'reset', Backspace: 'back', KeyM: 'mute',
-    KeyQ: 'quran', BracketLeft: 'qprev', BracketRight: 'qnext'
+    KeyQ: 'quran', BracketLeft: 'qprev', BracketRight: 'qnext',
+    KeyF: 'foot', KeyE: 'foot'
   };
   window.addEventListener('keydown', e => {
     const k = KEYMAP[e.code];
@@ -1466,6 +1524,24 @@ function startGame() {
         s.start(t); s.stop(t + 0.65);
       } catch (e) {}
     },
+    gun() { // sharp pistol crack: click transient + short noise burst
+      if (!this.ok) return;
+      try {
+        const c = this.ctx, t = c.currentTime;
+        const s = c.createBufferSource(); s.buffer = this.noiseBuf; s.playbackRate.value = 1.8;
+        const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.7; f.frequency.value = 1400;
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.16, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+        s.connect(f); f.connect(g); g.connect(this.master);
+        s.start(t); s.stop(t + 0.1);
+        const o = c.createOscillator(); o.type = 'square';
+        o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(60, t + 0.05);
+        const g2 = c.createGain();
+        g2.gain.setValueAtTime(0.08, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+        o.connect(g2); g2.connect(this.master); o.start(t); o.stop(t + 0.07);
+      } catch (e) {}
+    },
     thud() { // body-on-body contact with traffic
       if (!this.ok) return;
       try {
@@ -1611,6 +1687,702 @@ function startGame() {
     toggle() { this.on ? this.stop() : this.start(); },
     next() { this.idx = (this.idx + 1) % 114; SAVE.set('quranIdx', this.idx); if (this.on) this.start(); },
     prev() { this.idx = (this.idx + 113) % 114; SAVE.set('quranIdx', this.idx); if (this.on) this.start(); }
+  };
+
+  // ---------------------------------------------- NEO CITY sandbox
+  // All open-world state + systems live here. Everything is stylized,
+  // top-down and cartoonish — tiny vector people, arcade "heat". Active
+  // only while TRACK.city; the lap/drift machinery is bypassed for it.
+  const PED_COLORS = ['#e8c9a0', '#c98f6a', '#f0d8b8', '#b57a52', '#d8a878'];
+  const SHIRTS = ['#5a7fd6', '#d65a6a', '#5ad68f', '#d6b45a', '#9a6ad6', '#4ab0c0', '#d68f5a', '#c0c0c8'];
+  const CITY = {
+    peds: [], cars: [], cops: [], bullets: [], fx: [],
+    ped: null, wanted: 0, wantedT: 0, hp: 100, maxHp: 100,
+    state: 'drive', busyT: 0, bustT: 0, msg: '', msgT: 99, killMsg: '', killT: 99,
+    fireCD: 0, enterCD: 0, kills: 0, jacks: 0,
+
+    // ---- grid helpers ----
+    onRoad(x, y) {
+      const B = TRACK.BLOCK, RW = TRACK.ROAD;
+      const mx = ((x % B) + B) % B, my = ((y % B) + B) % B;
+      return Math.min(mx, B - mx) < RW / 2 || Math.min(my, B - my) < RW / 2;
+    },
+    bldAt(i, j) { return TRACK.buildings.get(i + ',' + j); },
+    // push an entity (circle radius r) out of any building it overlaps
+    resolveEnt(e, r) {
+      const B = TRACK.BLOCK;
+      const ci = Math.floor(e.x / B), cj = Math.floor(e.y / B);
+      let hit = false;
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+        const b = this.bldAt(ci + di, cj + dj);
+        if (!b) continue;
+        const nx = clamp(e.x, b.x, b.x + b.w), ny = clamp(e.y, b.y, b.y + b.h);
+        const dx = e.x - nx, dy = e.y - ny, d2 = dx * dx + dy * dy;
+        if (d2 >= r * r) continue;
+        hit = true;
+        if (d2 > 1e-3) {
+          const d = Math.sqrt(d2), push = r - d, ux = dx / d, uy = dy / d;
+          e.x += ux * push; e.y += uy * push;
+          if (e.vx !== undefined) {
+            const vn = e.vx * ux + e.vy * uy;
+            if (vn < 0) { e.vx -= vn * ux; e.vy -= vn * uy; }
+          }
+        } else {                                       // center inside: eject
+          const l = e.x - b.x, rt = b.x + b.w - e.x, t = e.y - b.y, bt = b.y + b.h - e.y;
+          const mn = Math.min(l, rt, t, bt);
+          if (mn === l) e.x = b.x - r; else if (mn === rt) e.x = b.x + b.w + r;
+          else if (mn === t) e.y = b.y - r; else e.y = b.y + b.h + r;
+          if (e.vx !== undefined) { e.vx *= 0.2; e.vy *= 0.2; }
+        }
+      }
+      return hit;
+    },
+    // nearest road-aligned unit direction (for AI walking/driving)
+    roadDir(x, y, prefX) {
+      const B = TRACK.BLOCK;
+      const mx = ((x % B) + B) % B, my = ((y % B) + B) % B;
+      const onV = Math.min(mx, B - mx) < TRACK.ROAD / 2;
+      return (onV && !prefX) ? { x: 0, y: 1 } : { x: 1, y: 0 };
+    },
+    playerPos() { return G.onFoot ? this.ped : car; },
+    playerActive() { return G.onFoot ? this.ped : car; },
+
+    // spawn a random point on a road near a center (for streaming NPCs)
+    roadPointNear(cx, cy, minR, maxR) {
+      const B = TRACK.BLOCK;
+      for (let tries = 0; tries < 12; tries++) {
+        const a = rnd(TAU), r = rnd(minR, maxR);
+        let x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+        x = clamp(x, 40, TRACK.worldW - 40); y = clamp(y, 40, TRACK.worldH - 40);
+        // snap onto the nearest road centerline (pick the closer axis)
+        const kx = Math.round(x / B) * B, ky = Math.round(y / B) * B;
+        if (Math.abs(x - kx) < Math.abs(y - ky)) x = kx + rnd(-TRACK.ROAD * 0.3, TRACK.ROAD * 0.3);
+        else y = ky + rnd(-TRACK.ROAD * 0.3, TRACK.ROAD * 0.3);
+        return { x, y };
+      }
+      return { x: cx, y: cy };
+    },
+    // point on the sidewalk band next to a road, near a center
+    sidewalkPointNear(cx, cy, minR, maxR) {
+      const B = TRACK.BLOCK, off = TRACK.ROAD / 2 + TRACK.SW * 0.5;
+      const a = rnd(TAU), r = rnd(minR, maxR);
+      let x = clamp(cx + Math.cos(a) * r, 40, TRACK.worldW - 40);
+      let y = clamp(cy + Math.sin(a) * r, 40, TRACK.worldH - 40);
+      const kx = Math.round(x / B) * B, ky = Math.round(y / B) * B;
+      if (Math.abs(x - kx) < Math.abs(y - ky)) x = kx + (Math.random() < 0.5 ? -off : off);
+      else y = ky + (Math.random() < 0.5 ? -off : off);
+      return { x, y };
+    },
+
+    setMsg(m) { this.msg = m; this.msgT = 0; },
+
+    begin() {
+      this.peds = []; this.cars = []; this.cops = []; this.bullets = []; this.fx = [];
+      this.ped = null; this.wanted = 0; this.wantedT = 0; this.hp = this.maxHp;
+      this.state = 'drive'; this.busyT = 0; this.bustT = 0; this.fireCD = 0; this.enterCD = 0;
+      this.kills = 0; this.jacks = 0; this.msgT = 99; this.killT = 99;
+      G.onFoot = false;
+      this.spawnInitial();
+      this.setMsg('NEO CITY · F to get out · roam free');
+    },
+
+    // ---- main update dispatch ----
+    update(dt) {
+      this.msgT += dt; this.killT += dt;
+      this.fireCD = Math.max(0, this.fireCD - dt);
+      this.enterCD = Math.max(0, this.enterCD - dt);
+      if (this.state === 'wasted' || this.state === 'busted') {
+        this.busyT -= dt;
+        if (this.busyT <= 0) this.respawn();
+        this.updateFx(dt); this.camera(dt);
+        return;
+      }
+      if (!G.onFoot && car) {
+        const steps = Math.max(1, Math.ceil(dt * 120 - 1e-6));
+        const hh = dt / steps;
+        for (let i = 0; i < steps; i++) stepCar(hh);
+        if (this.resolveEnt(car, 20) && car.speed > 240) G.shake = Math.max(G.shake, 1.2);
+        this.carVsPeds(dt);
+      } else if (G.onFoot) {
+        this.updatePed(dt);
+      }
+      this.updateCars(dt);
+      this.updatePeds(dt);
+      this.updateCops(dt);
+      this.updateBullets(dt);
+      this.updateFx(dt);
+      this.updateWanted(dt);
+      this.stream(dt);
+      this.camera(dt);
+    },
+
+    camera(dt) {
+      const a = this.playerActive();
+      if (!a) return;
+      const k = clamp(dt * 3.4, 0, 1);
+      const lead = G.onFoot ? 30 : clamp(60 + car.speed * 0.16, 60, 200);
+      const hx = G.onFoot ? Math.cos(a.h) : (car.speed > 40 ? car.vx / car.speed : Math.cos(a.h));
+      const hy = G.onFoot ? Math.sin(a.h) : (car.speed > 40 ? car.vy / car.speed : Math.sin(a.h));
+      cam.x = lerp(cam.x, a.x + hx * lead, k);
+      cam.y = lerp(cam.y, a.y + hy * lead, k);
+      cam.rot += angNorm(0 - cam.rot) * clamp(dt * 6, 0, 1);   // north-up
+      const zT = G.onFoot ? 1.5 : clamp(1.28 - (car.speed / car.spec.phys.maxSpeed) * 0.16, 1.08, 1.28);
+      cam.z = lerp(cam.z, zT, clamp(dt * 2.4, 0, 1));
+    },
+
+    respawn() {
+      // wake up at the central "hospital" intersection, heat cleared
+      const x = TRACK.cx, y = TRACK.cy + TRACK.BLOCK;
+      G.onFoot = false; this.state = 'drive';
+      this.hp = this.maxHp; this.wanted = 0; this.wantedT = 0; this.bustT = 0; this.hitFlash = 0;
+      this.cops = []; this.bullets = []; this.cars = this.cars.filter(v => !v.police);
+      car.x = x; car.y = y; car.h = -Math.PI / 2;
+      car.vx = 0; car.vy = 0; car.speed = 0; car.slip = 0; car.drifting = false;
+      car.rpm = 0; car.gearI = 0; car.gear = 1;
+      cam.x = x; cam.y = y; cam.z = 1.2; cam.rot = 0;
+      this.setMsg(this.lastState === 'busted' ? 'BUSTED — back on the street' : 'WASTED — patched up');
+    },
+
+    // ---- on-foot player ----
+    updatePed(dt) {
+      const p = this.ped; if (!p) return;
+      const ts = touchState();
+      const sx = ((keys.left || ts.left) ? -1 : 0) + ((keys.right || ts.right) ? 1 : 0);
+      const sy = ((keys.up || ts.up) ? -1 : 0) + ((keys.down || ts.down) ? 1 : 0);
+      let tvx = sx, tvy = sy;
+      const l = Math.hypot(tvx, tvy);
+      if (l > 0) { tvx /= l; tvy /= l; p.h = Math.atan2(tvy, tvx); p.walk += dt * 12; }
+      const SPD = 168;
+      p.vx = lerp(p.vx, tvx * SPD, clamp(dt * 11, 0, 1));
+      p.vy = lerp(p.vy, tvy * SPD, clamp(dt * 11, 0, 1));
+      p.x = clamp(p.x + p.vx * dt, 18, TRACK.worldW - 18);
+      p.y = clamp(p.y + p.vy * dt, 18, TRACK.worldH - 18);
+      this.resolveEnt(p, 9);
+      p.moving = l > 0;
+      if (keys.eb || ts.eb) this.fire();
+    },
+    enterExit() {
+      if (this.enterCD > 0 || this.state === 'wasted' || this.state === 'busted') return;
+      this.enterCD = 0.4;
+      if (!G.onFoot) {
+        if (car.speed > 140) { this.setMsg('slow down to get out'); return; }
+        // step out on the driver's side (left of travel)
+        const ox = car.x - Math.sin(car.h) * 24, oy = car.y + Math.cos(car.h) * 24;
+        this.ped = {
+          x: ox, y: oy, h: car.h, vx: 0, vy: 0, walk: 0, moving: false,
+          skin: PED_COLORS[(Math.random() * PED_COLORS.length) | 0], shirt: '#7dffb0',
+          gun: true, player: true, state: 'walk'
+        };
+        this.resolveEnt(this.ped, 9);
+        car.vx = 0; car.vy = 0; car.speed = 0; car.drifting = false; car.inThr = 0;
+        G.onFoot = true;
+        this.setMsg('on foot · SPACE shoot · F get in');
+        SND.beep(300, 0.05, 'sine', 0.05);
+      } else {
+        const p = this.ped;
+        // nearest jackable civilian car
+        let best = null, bd = 46 * 46;
+        for (const v of this.cars) {
+          if (v.state === 'wrecked') continue;
+          const dd = (v.x - p.x) ** 2 + (v.y - p.y) ** 2;
+          if (dd < bd) { bd = dd; best = v; }
+        }
+        const ownDd = (car.x - p.x) ** 2 + (car.y - p.y) ** 2;
+        if (best && bd <= ownDd) { this.jack(best); return; }
+        if (ownDd < 62 * 62) {
+          G.onFoot = false; this.ped = null;
+          this.setMsg('driving · F to get out');
+          SND.beep(300, 0.05, 'sine', 0.05);
+        } else { this.setMsg('no car nearby'); this.enterCD = 0.1; }
+      }
+    },
+
+    // ---- pedestrians ----
+    makePed(x, y) {
+      const d = [[1, 0], [-1, 0], [0, 1], [0, -1]][(Math.random() * 4) | 0];
+      return {
+        x, y, h: Math.atan2(d[1], d[0]), vx: 0, vy: 0, walk: rnd(TAU),
+        dir: { x: d[0], y: d[1] }, dirT: rnd(1.5, 4), spd: rnd(42, 74),
+        skin: PED_COLORS[(Math.random() * PED_COLORS.length) | 0],
+        shirt: SHIRTS[(Math.random() * SHIRTS.length) | 0],
+        state: 'walk', panic: 0, deadT: 0, moving: true
+      };
+    },
+    alarmPeds(x, y, r) {
+      for (const p of this.peds) {
+        if (p.state === 'dead') continue;
+        if ((p.x - x) ** 2 + (p.y - y) ** 2 < r * r) {
+          p.state = 'flee'; p.panic = rnd(2.5, 4.5);
+          p.fx = p.x - x; p.fy = p.y - y;
+        }
+      }
+    },
+    killPed(p, byCar) {
+      if (p.state === 'dead') return;
+      p.state = 'dead'; p.deadT = 0; p.vx = 0; p.vy = 0;
+      this.kills++;
+      this.fx.push({ kind: 'spark', x: p.x, y: p.y, t: 0, life: 0.4 });
+      this.killMsg = p.cop ? 'COP DOWN' : 'DOWN'; this.killT = 0;
+      this.crime(p.cop ? 3 : 1, null);
+      this.alarmPeds(p.x, p.y, 220);
+      SND.thud();
+    },
+    updatePeds(dt) {
+      const pp = this.playerPos();
+      for (let i = this.peds.length - 1; i >= 0; i--) {
+        const p = this.peds[i];
+        if (p.state === 'dead') {
+          p.deadT += dt;
+          if (p.deadT > 6.5) this.peds.splice(i, 1);
+          continue;
+        }
+        p.panic = Math.max(0, p.panic - dt);
+        // flee from fast car bearing down
+        if (!G.onFoot && car && car.speed > 240 && (p.x - car.x) ** 2 + (p.y - car.y) ** 2 < 150 * 150) {
+          p.state = 'flee'; p.panic = Math.max(p.panic, 1.6); p.fx = p.x - car.x; p.fy = p.y - car.y;
+        }
+        let dx, dy, spd = p.spd;
+        if (p.state === 'flee' && p.panic > 0) {
+          const l = Math.hypot(p.fx, p.fy) || 1; dx = p.fx / l; dy = p.fy / l; spd = p.spd * 2.1;
+        } else {
+          if (p.state === 'flee') p.state = 'walk';
+          p.dirT -= dt;
+          if (p.dirT <= 0) {
+            const d = [[1, 0], [-1, 0], [0, 1], [0, -1]][(Math.random() * 4) | 0];
+            p.dir = { x: d[0], y: d[1] }; p.dirT = rnd(1.5, 4);
+          }
+          dx = p.dir.x; dy = p.dir.y;
+        }
+        p.vx = lerp(p.vx, dx * spd, clamp(dt * 6, 0, 1));
+        p.vy = lerp(p.vy, dy * spd, clamp(dt * 6, 0, 1));
+        const nx = clamp(p.x + p.vx * dt, 16, TRACK.worldW - 16);
+        const ny = clamp(p.y + p.vy * dt, 16, TRACK.worldH - 16);
+        p.x = nx; p.y = ny;
+        if (this.resolveEnt(p, 8) && p.state !== 'flee') { p.dirT = 0; }  // bumped a wall → repick
+        if (dx || dy) { p.h = Math.atan2(dy, dx); p.walk += dt * (spd > 100 ? 18 : 10); }
+      }
+    },
+
+    // ---- civilian traffic ----
+    makeCar(x, y, dir) {
+      const spec = CARS.filter(c => c.cat !== 'gt')[(Math.random() * 5) | 0];
+      return {
+        spec, x, y, h: Math.atan2(dir.y, dir.x), vx: 0, vy: 0,
+        dir, speed: rnd(150, 210), cruise: rnd(170, 230),
+        lastK: 99999, braking: false, state: 'drive'
+      };
+    },
+    spawnCarNear(cx, cy) {
+      const B = TRACK.BLOCK, laneOff = TRACK.ROAD * 0.22, W2 = TRACK.worldW;
+      if (Math.random() < 0.5) {
+        const yLine = clamp(Math.round((cy + rnd(-2.2, 2.2) * B) / B) * B, B, W2 - B);
+        const dir = Math.random() < 0.5 ? { x: 1, y: 0 } : { x: -1, y: 0 };
+        const x = clamp(cx + rnd(-1, 1) * 1000, 60, W2 - 60);
+        return this.makeCar(x, yLine + dir.x * laneOff, dir);
+      }
+      const xLine = clamp(Math.round((cx + rnd(-2.2, 2.2) * B) / B) * B, B, W2 - B);
+      const dir = Math.random() < 0.5 ? { x: 0, y: 1 } : { x: 0, y: -1 };
+      const y = clamp(cy + rnd(-1, 1) * 1000, 60, W2 - 60);
+      return this.makeCar(xLine - dir.y * laneOff, y, dir);
+    },
+    updateCars(dt) {
+      const B = TRACK.BLOCK, laneOff = TRACK.ROAD * 0.22;
+      for (const v of this.cars) {
+        if (v.police) continue;   // pursuit AI drives cop cars (updateCops)
+        if (v.state === 'wrecked' || v.state === 'parked') { v.vx = 0; v.vy = 0; continue; }
+        const along = v.dir.x !== 0 ? v.x : v.y;
+        const kA = Math.round(along / B);
+        if (kA !== v.lastK) {
+          v.lastK = kA;
+          const r = Math.random();
+          if (r > 0.72) { const d = v.dir; v.dir = r > 0.86 ? { x: d.y, y: -d.x } : { x: -d.y, y: d.x }; }
+          v.h = Math.atan2(v.dir.y, v.dir.x);
+        }
+        let spd = v.cruise;
+        const ahead = (ox, oy) => {
+          const rx = ox - v.x, ry = oy - v.y;
+          const fwd = rx * v.dir.x + ry * v.dir.y, side = Math.abs(rx * -v.dir.y + ry * v.dir.x);
+          return fwd > 0 && fwd < 84 && side < 26;
+        };
+        if (!G.onFoot && car && ahead(car.x, car.y)) spd = 0;
+        for (const o of this.cars) { if (o !== v && ahead(o.x, o.y)) spd = Math.min(spd, o.speed * 0.5); }
+        v.speed = lerp(v.speed, spd, clamp(dt * 3, 0, 1));
+        v.braking = spd < v.cruise * 0.5;
+        if (v.dir.x !== 0) {
+          v.x += v.dir.x * v.speed * dt;
+          const yLine = Math.round(v.y / B) * B;
+          v.y = lerp(v.y, yLine + v.dir.x * laneOff, clamp(dt * 4, 0, 1));
+        } else {
+          v.y += v.dir.y * v.speed * dt;
+          const xLine = Math.round(v.x / B) * B;
+          v.x = lerp(v.x, xLine - v.dir.y * laneOff, clamp(dt * 4, 0, 1));
+        }
+        v.x = clamp(v.x, 40, TRACK.worldW - 40); v.y = clamp(v.y, 40, TRACK.worldH - 40);
+        this.resolveEnt(v, 18);
+      }
+    },
+    carVsPeds(dt) {
+      if (G.onFoot || !car || car.speed < 55) return;
+      for (const p of this.peds) {
+        if (p.state === 'dead') continue;
+        if ((p.x - car.x) ** 2 + (p.y - car.y) ** 2 < 22 * 22) this.killPed(p, true);
+      }
+    },
+    jack(v) {
+      // leave your old ride behind as an abandoned parked car
+      this.cars.push({ spec: car.spec, x: car.x, y: car.y, h: car.h, dir: { x: Math.cos(car.h), y: Math.sin(car.h) }, speed: 0, vx: 0, vy: 0, state: 'parked', lastK: 99999, braking: false });
+      // drop into the civilian car
+      const idx = this.cars.indexOf(v); if (idx >= 0) this.cars.splice(idx, 1);
+      car.spec = v.spec; SND.setCar(v.spec);
+      car.x = v.x; car.y = v.y; car.h = v.h;
+      car.vx = 0; car.vy = 0; car.speed = 0; car.rpm = 0; car.gearI = 0; car.gear = 1; car.drifting = false;
+      // kicked-out driver flees
+      if (v.state !== 'parked') {
+        const dp = this.makePed(v.x - Math.sin(v.h) * 22, v.y + Math.cos(v.h) * 22);
+        dp.state = 'flee'; dp.panic = 4; dp.fx = -Math.cos(v.h); dp.fy = -Math.sin(v.h);
+        this.peds.push(dp);
+      }
+      G.onFoot = false; this.ped = null;
+      this.jacks++;
+      this.crime(1, 'CARJACKED · 車を奪った');
+      this.alarmPeds(car.x, car.y, 170);
+      SND.beep(220, 0.08, 'sawtooth', 0.06);
+    },
+
+    // ---- streaming (keep density around the player) ----
+    stream(dt) {
+      const pp = this.playerPos(); if (!pp) return;
+      const cull = 1700;
+      for (let i = this.peds.length - 1; i >= 0; i--) {
+        const p = this.peds[i];
+        if (p.state !== 'dead' && (Math.abs(p.x - pp.x) > cull || Math.abs(p.y - pp.y) > cull)) this.peds.splice(i, 1);
+      }
+      for (let i = this.cars.length - 1; i >= 0; i--) {
+        const v = this.cars[i];
+        if (Math.abs(v.x - pp.x) > cull || Math.abs(v.y - pp.y) > cull) this.cars.splice(i, 1);
+      }
+      const alive = this.peds.filter(p => p.state !== 'dead').length;
+      if (alive < 20 && Math.random() < dt * 14) {
+        const s = this.sidewalkPointNear(pp.x, pp.y, 620, 1300);
+        this.peds.push(this.makePed(s.x, s.y));
+      }
+      if (this.cars.filter(v => v.state === 'drive').length < 9 && Math.random() < dt * 8) {
+        this.cars.push(this.spawnCarNear(pp.x, pp.y));
+      }
+    },
+    spawnInitial() {
+      const cx = TRACK.cx, cy = TRACK.cy;
+      for (let i = 0; i < 22; i++) { const s = this.sidewalkPointNear(cx, cy, 60, 1200); this.peds.push(this.makePed(s.x, s.y)); }
+      for (let i = 0; i < 10; i++) this.cars.push(this.spawnCarNear(cx, cy));
+    },
+
+    // ---- crime / heat (police response added below) ----
+    crime(amt, label) {
+      this.wanted = Math.min(5, this.wanted + amt);
+      this.wantedT = 0;
+      if (label) this.setMsg(label);
+    },
+
+    // ---- shooting ----
+    fire() {
+      if (!G.onFoot || !this.ped || this.fireCD > 0 || this.state !== 'drive') return;
+      const p = this.ped; this.fireCD = 0.15;
+      const a = p.h + (Math.random() - 0.5) * 0.08, SP = 920;
+      const sx = p.x + Math.cos(p.h) * 12, sy = p.y + Math.sin(p.h) * 12;
+      this.bullets.push({ x: sx, y: sy, vx: Math.cos(a) * SP, vy: Math.sin(a) * SP, life: 0.55, from: 'player' });
+      this.fx.push({ kind: 'muzzle', x: sx, y: sy, t: 0, life: 0.08 });
+      SND.gun();
+      if (this.wanted < 1) this.crime(1, 'PACKING HEAT · 手配');   // brandishing = 1 star
+      this.wantedT = 0;
+      this.alarmPeds(p.x, p.y, 250);
+    },
+    hurtPlayer(dmg) {
+      if (this.state !== 'drive') return;
+      this.hp = Math.max(0, this.hp - dmg);
+      this.hitFlash = 0.18; G.shake = Math.max(G.shake, 1.2);
+      if (this.hp <= 0) this.wasted();
+    },
+    hurtCop(cop, dmg) {
+      cop.hp = (cop.hp || 40) - dmg;
+      this.fx.push({ kind: 'spark', x: cop.x, y: cop.y, t: 0, life: 0.3 });
+      if (cop.hp <= 0 && cop.state !== 'dead') { this.killPed(cop); }
+    },
+    wasted() {
+      this.lastState = 'wasted'; this.state = 'wasted'; this.busyT = 2.6;
+      this.setMsg('WASTED · 殺られた'); G.shake = 3; this.bullets = [];
+      SND.beep(120, 0.5, 'sawtooth', 0.07);
+    },
+    busted() {
+      this.lastState = 'busted'; this.state = 'busted'; this.busyT = 2.4;
+      this.setMsg('BUSTED · 逮捕'); SND.beep(420, 0.4, 'square', 0.06);
+    },
+    updateBullets(dt) {
+      const B = TRACK.BLOCK, tgt = this.playerPos();
+      for (let i = this.bullets.length - 1; i >= 0; i--) {
+        const b = this.bullets[i];
+        b.life -= dt; b.x += b.vx * dt; b.y += b.vy * dt;
+        if (b.life <= 0) { this.bullets.splice(i, 1); continue; }
+        // buildings stop bullets
+        const bd = this.bldAt(Math.floor(b.x / B), Math.floor(b.y / B));
+        if (bd && b.x > bd.x && b.x < bd.x + bd.w && b.y > bd.y && b.y < bd.y + bd.h) {
+          this.fx.push({ kind: 'spark', x: b.x, y: b.y, t: 0, life: 0.25 }); this.bullets.splice(i, 1); continue;
+        }
+        let hit = false;
+        if (b.from === 'player') {
+          for (const p of this.peds) { if (p.state === 'dead') continue; if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 < 100) { this.killPed(p); hit = true; break; } }
+          if (!hit) for (const cop of this.cops) { if (cop.state === 'dead') continue; if ((cop.x - b.x) ** 2 + (cop.y - b.y) ** 2 < 121) { this.hurtCop(cop, 55); hit = true; break; } }
+        } else {
+          const r = G.onFoot ? 11 : 20;
+          if (tgt && (tgt.x - b.x) ** 2 + (tgt.y - b.y) ** 2 < r * r) { this.hurtPlayer(16); hit = true; }
+        }
+        if (hit) { this.fx.push({ kind: 'spark', x: b.x, y: b.y, t: 0, life: 0.3 }); this.bullets.splice(i, 1); }
+      }
+    },
+
+    // ---- police ----
+    makeCopCar(tgt) {
+      const spec = CARS.find(c => c.id === 'gtr3') || CARS[0];
+      const a = rnd(TAU), r = rnd(760, 1100);
+      const x = clamp(tgt.x + Math.cos(a) * r, 60, TRACK.worldW - 60);
+      const y = clamp(tgt.y + Math.sin(a) * r, 60, TRACK.worldH - 60);
+      return { spec, x, y, h: Math.atan2(tgt.y - y, tgt.x - x), vx: 0, vy: 0, speed: 0, police: true, state: 'drive', flash: 0, braking: false };
+    },
+    makeCopPed(tgt) {
+      const a = rnd(TAU), r = rnd(280, 460);
+      const p = this.makePed(clamp(tgt.x + Math.cos(a) * r, 40, TRACK.worldW - 40), clamp(tgt.y + Math.sin(a) * r, 40, TRACK.worldH - 40));
+      p.cop = true; p.hp = 40; p.shirt = '#2b3a8f'; p.gun = true; p.state = 'chase'; p.fireT = rnd(0.4, 1.2);
+      return p;
+    },
+    copShoot(cop, tgt) {
+      const a = Math.atan2(tgt.y - cop.y, tgt.x - cop.x) + (Math.random() - 0.5) * 0.18, SP = 760;
+      const sx = cop.x + Math.cos(a) * 12, sy = cop.y + Math.sin(a) * 12;
+      this.bullets.push({ x: sx, y: sy, vx: Math.cos(a) * SP, vy: Math.sin(a) * SP, life: 0.7, from: 'cop' });
+      this.fx.push({ kind: 'muzzle', x: sx, y: sy, t: 0, life: 0.08 });
+      SND.gun();
+    },
+    updateCops(dt) {
+      const tgt = this.playerPos(); if (!tgt) return;
+      if (this.wanted <= 0) {
+        if (this.cops.length || this.cars.some(v => v.police)) { this.cops = []; this.cars = this.cars.filter(v => !v.police); }
+        return;
+      }
+      // spawn to match heat
+      const wantCars = Math.min(6, this.wanted + 1), wantFoot = this.wanted >= 2 ? Math.min(6, this.wanted) : 0;
+      const copCars = this.cars.filter(v => v.police).length;
+      if (copCars < wantCars && Math.random() < dt * 1.8) this.cars.push(this.makeCopCar(tgt));
+      const liveFoot = this.cops.filter(c => c.state !== 'dead').length;
+      if (liveFoot < wantFoot && Math.random() < dt * 1.3) this.cops.push(this.makeCopPed(tgt));
+      let seen = false;
+      // cop cars pursue + ram
+      for (const v of this.cars) {
+        if (!v.police) continue;
+        const dx = tgt.x - v.x, dy = tgt.y - v.y, dist = Math.hypot(dx, dy) || 1;
+        if (dist < 560) seen = true;
+        v.h += angNorm(Math.atan2(dy, dx) - v.h) * clamp(dt * 3.5, 0, 1);
+        v.speed = lerp(v.speed, dist > 50 ? 320 : 0, clamp(dt * 3, 0, 1));
+        v.x += Math.cos(v.h) * v.speed * dt; v.y += Math.sin(v.h) * v.speed * dt;
+        this.resolveEnt(v, 20); v.flash += dt;
+        if (!G.onFoot && dist < 30) { G.shake = Math.max(G.shake, 1.8); this.hurtPlayer(22 * dt); }
+      }
+      // cop peds chase + shoot; remove the fallen
+      for (let i = this.cops.length - 1; i >= 0; i--) {
+        const cop = this.cops[i];
+        if (cop.state === 'dead') { cop.deadT += dt; if (cop.deadT > 6.5) this.cops.splice(i, 1); continue; }
+        const dx = tgt.x - cop.x, dy = tgt.y - cop.y, dist = Math.hypot(dx, dy) || 1;
+        if (dist < 520) seen = true;
+        cop.h = Math.atan2(dy, dx); cop.walk += dt * 15;
+        const spd = dist > 74 ? 132 : 0;
+        cop.x += dx / dist * spd * dt; cop.y += dy / dist * spd * dt;
+        this.resolveEnt(cop, 8);
+        cop.fireT = (cop.fireT || 0) - dt;
+        if (dist < 430 && cop.fireT <= 0) { cop.fireT = rnd(0.7, 1.5); this.copShoot(cop, tgt); }
+      }
+      if (seen) this.wantedT = 0;
+      // busted: cornered on foot next to a cop and barely moving
+      if (G.onFoot && this.ped) {
+        const near = this.cops.some(c => c.state !== 'dead' && (c.x - tgt.x) ** 2 + (c.y - tgt.y) ** 2 < 30 * 30);
+        const slow = Math.hypot(this.ped.vx, this.ped.vy) < 42;
+        if (near && slow) { this.bustT += dt; if (this.bustT > 1.3) this.busted(); }
+        else this.bustT = Math.max(0, this.bustT - dt * 1.6);
+      } else this.bustT = 0;
+    },
+    updateWanted(dt) {
+      this.wantedT += dt;
+      this.hitFlash = Math.max(0, (this.hitFlash || 0) - dt);
+      const cool = this.wanted >= 4 ? 15 : this.wanted >= 2 ? 11 : 8;
+      if (this.wanted > 0 && this.wantedT > cool) { this.wanted--; this.wantedT = 0; if (this.wanted === 0) this.setMsg('heat off · 手配解除'); }
+    },
+    updateFx(dt) {
+      for (let i = this.fx.length - 1; i >= 0; i--) {
+        const f = this.fx[i];
+        f.t += dt; f.x += (f.vx || 0) * dt; f.y += (f.vy || 0) * dt;
+        if (f.t > f.life) this.fx.splice(i, 1);
+      }
+    },
+
+    // ---- rendering ----
+    render(g) {
+      this.drawGround(g);
+      drawSkids();
+      const view = viewHalfExtents(320);
+      const vw = view.x, vh = view.y;
+      const list = [];
+      // visible buildings
+      const B = TRACK.BLOCK;
+      const k0 = Math.floor((cam.x - vw) / B) - 1, k1 = Math.floor((cam.x + vw) / B) + 1;
+      const l0 = Math.floor((cam.y - vh) / B) - 1, l1 = Math.floor((cam.y + vh) / B) + 1;
+      for (let i = k0; i <= k1; i++) for (let j = l0; j <= l1; j++) {
+        const b = this.bldAt(i, j);
+        if (!b) continue;
+        const bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+        list.push({ d: (bcx - cam.x) ** 2 + (bcy - cam.y) ** 2, draw: gg => this.drawBuilding(gg, b, bcx, bcy) });
+      }
+      // entities
+      for (const p of this.peds) if (this.vis(p, vw, vh, 40)) { const q = p; list.push({ d: (q.x - cam.x) ** 2 + (q.y - cam.y) ** 2, draw: gg => this.drawPed(gg, q) }); }
+      for (const c of this.cops) if (this.vis(c, vw, vh, 40)) { const q = c; list.push({ d: (q.x - cam.x) ** 2 + (q.y - cam.y) ** 2, draw: gg => this.drawPed(gg, q) }); }
+      for (const v of this.cars) if (this.vis(v, vw, vh, 60)) {
+        const q = v;
+        list.push({
+          d: (q.x - cam.x) ** 2 + (q.y - cam.y) ** 2,
+          draw: gg => {
+            drawCarWorld(gg, q.x, q.y, q.h, q.spec, { brake: q.braking });
+            if (q.police) {   // flashing red/blue roof bar
+              const on = ((G.t * 8) | 0) % 2 === 0;
+              gg.save(); gg.shadowBlur = 12;
+              for (const s of [-1, 1]) {
+                const red = (s < 0) === on;
+                gg.shadowColor = red ? '#ff3a3a' : '#3a7bff';
+                gg.fillStyle = red ? '#ff9a9a' : '#9ab8ff';
+                gg.beginPath();
+                gg.arc(q.x - Math.sin(q.h) * s * 4, q.y + Math.cos(q.h) * s * 4, 2.6, 0, TAU);
+                gg.fill();
+              }
+              gg.restore();
+            }
+          }
+        });
+      }
+      // player car — always drawn; sits parked while you're on foot
+      if (car) list.push({
+        d: (car.x - cam.x) ** 2 + (car.y - cam.y) ** 2,
+        draw: gg => drawCarWorld(gg, car.x, car.y, car.h, car.spec, G.onFoot
+          ? { brake: false }
+          : { steer: car.steer, roll: car.roll, pitch: car.pitch, brake: car.brakeOn || car.inEb, glow: true, flash: car.flash })
+      });
+      if (G.onFoot && this.ped) {
+        const q = this.ped;
+        list.push({ d: (q.x - cam.x) ** 2 + (q.y - cam.y) ** 2 - 1, draw: gg => this.drawPed(gg, q, true) });
+      }
+      list.sort((a, b) => b.d - a.d);
+      for (const it of list) it.draw(g);
+      // muzzle flashes / hit sparks
+      for (const f of this.fx) this.drawFx(g, f);
+      // bullets
+      g.save(); g.lineCap = 'round';
+      for (const bl of this.bullets) {
+        g.strokeStyle = bl.from === 'player' ? '#ffe27a' : '#ff6a6a';
+        g.lineWidth = 2.2;
+        g.beginPath(); g.moveTo(bl.x, bl.y); g.lineTo(bl.x - bl.vx * 0.02, bl.y - bl.vy * 0.02); g.stroke();
+      }
+      g.restore();
+    },
+    vis(e, vw, vh, pad) { return Math.abs(e.x - cam.x) < vw + pad && Math.abs(e.y - cam.y) < vh + pad; },
+
+    drawGround(g) {
+      const view = viewHalfExtents(90), vw = view.x, vh = view.y;
+      const B = TRACK.BLOCK, RW = TRACK.ROAD, SW = TRACK.SW;
+      g.fillStyle = '#191b22'; g.fillRect(cam.x - vw, cam.y - vh, vw * 2, vh * 2);   // block ground
+      const k0 = Math.floor((cam.x - vw) / B), k1 = Math.floor((cam.x + vw) / B) + 1;
+      const l0 = Math.floor((cam.y - vh) / B), l1 = Math.floor((cam.y + vh) / B) + 1;
+      // sidewalks (light band along each road edge)
+      g.fillStyle = '#4c515c';
+      for (let k = k0; k <= k1; k++) {
+        g.fillRect(k * B - RW / 2 - SW, cam.y - vh, SW, vh * 2);
+        g.fillRect(k * B + RW / 2, cam.y - vh, SW, vh * 2);
+      }
+      for (let l = l0; l <= l1; l++) {
+        g.fillRect(cam.x - vw, l * B - RW / 2 - SW, vw * 2, SW);
+        g.fillRect(cam.x - vw, l * B + RW / 2, vw * 2, SW);
+      }
+      // asphalt
+      g.fillStyle = '#2f333c';
+      for (let k = k0; k <= k1; k++) g.fillRect(k * B - RW / 2, cam.y - vh, RW, vh * 2);
+      for (let l = l0; l <= l1; l++) g.fillRect(cam.x - vw, l * B - RW / 2, vw * 2, RW);
+      // lane centre dashes
+      g.strokeStyle = 'rgba(255,214,110,0.45)'; g.lineWidth = 3; g.setLineDash([26, 30]);
+      g.beginPath();
+      for (let k = k0; k <= k1; k++) { g.moveTo(k * B, cam.y - vh); g.lineTo(k * B, cam.y + vh); }
+      for (let l = l0; l <= l1; l++) { g.moveTo(cam.x - vw, l * B); g.lineTo(cam.x + vw, l * B); }
+      g.stroke(); g.setLineDash([]);
+    },
+
+    drawBuilding(g, b, cx, cy) {
+      // soft ground shadow
+      g.fillStyle = 'rgba(6,4,12,0.35)';
+      g.fillRect(b.x + 8, b.y + 10, b.w, b.h);
+      boxPart(g, cx, cy, b.w / 2, b.h / 2, 0, 0, b.ht, b.col, b.roof, {
+        wallDeco: (g2, side, a0, b0, b1, a1) => {
+          // lit windows: a small grid on each visible facade
+          g2.save();
+          for (let u = 0.16; u < 0.9; u += 0.2) for (let v = 0.14; v < 0.92; v += 0.16) {
+            if (h01((b.lit + u * 13 + v * 27) * 91.7) < 0.45) continue;
+            const px = lerp(lerp(a0.x, b0.x, u), lerp(a1.x, b1.x, u), v);
+            const py = lerp(lerp(a0.y, b0.y, u), lerp(a1.y, b1.y, u), v);
+            g2.fillStyle = h01(u * 7 + v * 3 + b.lit) < 0.5 ? 'rgba(255,220,140,0.55)' : 'rgba(120,180,255,0.4)';
+            g2.fillRect(px - 1.3, py - 1.3, 2.6, 2.6);
+          }
+          g2.restore();
+        }
+      });
+    },
+
+    // a little top-down vector person: shadow, body (shirt), head
+    drawPed(g, p, isPlayer) {
+      const dead = p.state === 'dead';
+      g.save();
+      g.translate(p.x, p.y); g.rotate(p.h);
+      g.fillStyle = 'rgba(6,4,12,0.30)';
+      g.beginPath(); g.ellipse(1.5, 1.5, dead ? 7 : 4.2, dead ? 4 : 4.2, 0, 0, TAU); g.fill();
+      if (dead) {
+        // lying flat (stylized, non-graphic): a fallen figure, fading
+        g.globalAlpha = clamp(1 - (p.deadT || 0) / 6, 0.15, 1);
+        g.fillStyle = p.shirt; rr(g, -8, -3, 14, 6, 3); g.fill();
+        g.fillStyle = p.skin; g.beginPath(); g.arc(7, 0, 3, 0, TAU); g.fill();
+        g.restore(); return;
+      }
+      const wob = Math.sin((p.walk || 0)) * 1.6;
+      // legs
+      g.fillStyle = '#2b2f38';
+      g.fillRect(-1.6, -3 + wob * 0.4, 3.2, 3);
+      g.fillRect(-1.6, 0 - wob * 0.4, 3.2, 3);
+      // body
+      g.fillStyle = p.shirt;
+      g.beginPath(); g.ellipse(0, 0, 4.6, 3.4, 0, 0, TAU); g.fill();
+      // arms (gun arm forward if armed)
+      g.fillStyle = p.shirt;
+      g.fillRect(1, -4.4, 2.4, 1.8); g.fillRect(1, 2.6, 2.4, 1.8);
+      if (p.gun) { g.fillStyle = '#20242c'; g.fillRect(5, -0.9, 5, 1.8); }
+      // head
+      g.fillStyle = p.skin;
+      g.beginPath(); g.arc(1.4, 0, 2.7, 0, TAU); g.fill();
+      if (isPlayer) {   // player marker ring
+        g.strokeStyle = 'rgba(125,255,176,0.9)'; g.lineWidth = 1.2;
+        g.beginPath(); g.arc(0, 0, 8.5, 0, TAU); g.stroke();
+      } else if (p.cop) {
+        g.fillStyle = '#2b4bd7'; g.beginPath(); g.arc(1.4, 0, 1.4, 0, TAU); g.fill();  // cap
+      }
+      g.restore();
+    },
+    drawFx(g, f) {
+      if (f.kind === 'muzzle') {
+        g.save(); g.globalAlpha = clamp(1 - f.t / f.life, 0, 1);
+        g.shadowColor = '#ffcf6e'; g.shadowBlur = 10; g.fillStyle = '#ffe9a0';
+        g.beginPath(); g.arc(f.x, f.y, 4, 0, TAU); g.fill(); g.restore();
+      } else if (f.kind === 'spark') {
+        g.save(); g.globalAlpha = clamp(1 - f.t / f.life, 0, 1);
+        g.fillStyle = '#ffd7d7'; g.beginPath(); g.arc(f.x, f.y, 2.4, 0, TAU); g.fill(); g.restore();
+      }
+    }
   };
 
   // ---------------------------------------------- fake-3D helpers
@@ -2341,6 +3113,20 @@ function startGame() {
     const sc = MMW / TRACK.worldW;
     m.width = MMW; m.height = Math.max(24, Math.round(TRACK.worldH * sc));
     const g = m.getContext('2d');
+    if (TRACK.city) {
+      // road grid: dark blocks, light streets
+      g.fillStyle = 'rgba(20,22,30,0.9)'; g.fillRect(0, 0, m.width, m.height);
+      g.strokeStyle = 'rgba(150,160,180,0.6)';
+      g.lineWidth = Math.max(1, TRACK.ROAD * sc);
+      g.beginPath();
+      for (let k = 0; k <= TRACK.GN; k++) {
+        const q = k * TRACK.BLOCK * sc;
+        g.moveTo(q, 0); g.lineTo(q, m.height);
+        g.moveTo(0, q); g.lineTo(m.width, q);
+      }
+      g.stroke();
+      return m;
+    }
     const P = TRACK.pts, N = TRACK.N;
     const thick = TRACK.dyn ? 3.4 : 7;   // 20 km of line needs a finer pen
     for (const pass of [0, 1]) {
@@ -2370,7 +3156,10 @@ function startGame() {
     let w = worldCache[id];
     if (!w) {
       props = [];
-      if (!TRACK.dyn) {
+      if (TRACK.city) {
+        // the city renders itself per-frame from its grid (like the 'Ring)
+        bg = null; bgctx = null; marks = null; mctx = null;
+      } else if (!TRACK.dyn) {
         bg = document.createElement('canvas');
         bg.width = Math.round(TRACK.worldW); bg.height = Math.round(TRACK.worldH);
         bgctx = bg.getContext('2d');
@@ -2847,10 +3636,20 @@ function startGame() {
     cam.rot = TRACK.dyn ? -Math.PI / 2 - car.h : 0;
     G.wrong = 0; G.wrongDir = false; G.shake = 0;
     SND.init(); SND.setCar(spec);
+    if (TRACK.city) {
+      // free-roam: no grid start / countdown — you're just in the city
+      car.x = TRACK.cx; car.y = TRACK.cy; car.h = 0;
+      car.prog = 0; car.off = false; car.deep = false;
+      cam.x = car.x; cam.y = car.y; cam.z = 1.2; cam.rot = 0;
+      CITY.begin();
+      G.state = 'play';
+      return;
+    }
     G.state = 'count'; G.cd = 3.6; G.cdLast = 4;
   }
   function respawn() {
     if (!car) return;
+    if (TRACK.city) { CITY.respawn(); return; }
     const p = TRACK.pts[car.prog];
     car.x = p.x; car.y = p.y; car.h = Math.atan2(p.ty, p.tx);
     car.vx = 0; car.vy = 0; car.pwl = null; car.pwr = null;
@@ -3026,7 +3825,7 @@ function startGame() {
         const R = roster();
         if (k === 'left') { G.sel = (G.sel + R.length - 1) % R.length; SND.beep(520, 0.05, 'square', 0.045); }
         if (k === 'right') { G.sel = (G.sel + 1) % R.length; SND.beep(520, 0.05, 'square', 0.045); }
-        if (k === 'enter') G.state = 'mode';
+        if (k === 'enter') { if (G.track === 'city') { G.mode = 'free'; newRace(); } else G.state = 'mode'; }
         if (k === 'esc' || k === 'back') G.state = 'track';
         break;
       }
@@ -3042,6 +3841,7 @@ function startGame() {
       case 'play':
         if (k === 'esc') G.state = 'pause';
         if (k === 'reset') respawn();
+        if (k === 'foot' && TRACK.city) CITY.enterExit();
         break;
       case 'pause':
         if (k === 'esc' || k === 'enter') G.state = 'play';
@@ -3139,18 +3939,24 @@ function startGame() {
     c.pitch = lerp(c.pitch, brk + (eb ? 0.4 : 0) - c.inThr * 0.55, clamp(dt * 6, 0, 1));
     c.flash = Math.max(0, c.flash - dt);
 
-    // progress + surface (soft-fail off-track)
-    const ns = nearestSample(c.x, c.y, c.prog, 60);
-    c.prog = ns.i;
-    const hw = TRACK.pts[ns.i].w / 2;
-    const shoulder = TRACK.dyn ? 180 : 150;
-    let off = ns.d > hw + shoulder, deep = ns.d > hw + shoulder + 140;
-    if (off && anyOnTrack(c.x, c.y)) { off = false; deep = false; } // fig-8 branch
-    c.off = off; c.deep = deep;
-    c.wallZone = !off && c.drifting && speed > 150 && (hw - ns.d) < 36 && (hw - ns.d) > 0;
-    if (off) {
-      if (speed > 70 && Math.random() < dt * 26) spawnDust();
-      G.shake = Math.max(G.shake, deep ? 2.6 : 1.4);
+    // progress + surface (soft-fail off-track). The open city has no
+    // centreline — you can drive anywhere; buildings are the only walls
+    // (resolved in CITY.update), so no off-track penalty here.
+    if (TRACK.city) {
+      c.off = false; c.deep = false; c.wallZone = false; c.prog = 0;
+    } else {
+      const ns = nearestSample(c.x, c.y, c.prog, 60);
+      c.prog = ns.i;
+      const hw = TRACK.pts[ns.i].w / 2;
+      const shoulder = TRACK.dyn ? 180 : 150;
+      let off = ns.d > hw + shoulder, deep = ns.d > hw + shoulder + 140;
+      if (off && anyOnTrack(c.x, c.y)) { off = false; deep = false; } // fig-8 branch
+      c.off = off; c.deep = deep;
+      c.wallZone = !off && c.drifting && speed > 150 && (hw - ns.d) < 36 && (hw - ns.d) > 0;
+      if (off) {
+        if (speed > 70 && Math.random() < dt * 26) spawnDust();
+        G.shake = Math.max(G.shake, deep ? 2.6 : 1.4);
+      }
     }
     c.x += c.vx * dt; c.y += c.vy * dt;
     c.x = clamp(c.x, 24, TRACK.worldW - 24);
@@ -3164,7 +3970,7 @@ function startGame() {
     const bx = c.x + c2 * CH.wb[1], by = c.y + s2 * CH.wb[1];
     const wl = { x: bx + s2 * CH.tr, y: by - c2 * CH.tr };
     const wr = { x: bx - s2 * CH.tr, y: by + c2 * CH.tr };
-    const skidding = (c.drifting || (eb && speed > 110)) && !off;
+    const skidding = (c.drifting || (eb && speed > 110)) && !c.off;
     if (skidding && c.pwl) {
       if (TRACK.dyn) {
         skids.push({ x1: c.pwl.x, y1: c.pwl.y, x2: wl.x, y2: wl.y, t: G.playT });
@@ -3180,7 +3986,7 @@ function startGame() {
       }
     }
     c.pwl = wl; c.pwr = wr;
-    if (c.drifting && !off) {
+    if (c.drifting && !c.off) {
       const inten = clamp(Math.abs(slip) / 0.8, 0, 1) * clamp(speed / 300, 0, 1.2);
       c.smokeAcc += inten * dt * 46;
       let side = 0;
@@ -3191,8 +3997,8 @@ function startGame() {
       }
     }
 
-    // spin-out drops the combo (more forgiving in v2)
-    if (Math.abs(slip) > 2.35 && speed > 80 && !c.spinLock) {
+    // spin-out drops the combo (more forgiving in v2) — no combos in city
+    if (!TRACK.city && Math.abs(slip) > 2.35 && speed > 80 && !c.spinLock) {
       c.spinLock = true;
       if (score.chain > 1) addPop(c.x, c.y - 30, 'SPIN! スピン', '#ff6a6a', 20);
       score.chain = 0; score.mult = 1; score.chainT = 0; score.grace = 0;
@@ -3206,6 +4012,7 @@ function startGame() {
   // ---------------------------------------------- per-frame play update
   function updatePlay(dt) {
     G.playT += dt;   // play-time clock: skid marks must not age in pause
+    if (TRACK.city) { CITY.update(dt); fadeMarks(dt); updateParticles(dt); return; }
     // fixed-ish 120 Hz substeps: integration error stays constant from
     // 30 to 144 Hz displays, and identical wall-time inputs give
     // identical trajectories (fair time-attack across devices).
@@ -4001,6 +4808,9 @@ function startGame() {
     ctx.rotate(cam.rot || 0);
     ctx.translate(-cam.x + jx, -cam.y + jy);
     ctx.imageSmoothingEnabled = true;
+    if (TRACK.city) {
+     CITY.render(ctx);
+    } else {
     if (TRACK.dyn) {
       drawNringGround();
       drawSkids();
@@ -4079,6 +4889,7 @@ function startGame() {
     }
     list.sort((a, b) => b.d - a.d);
     for (const it of list) it.draw(ctx);
+    }
 
     // tyre smoke rises above the cars
     for (const p of smoke) {
@@ -4163,6 +4974,7 @@ function startGame() {
   // ---------------------------------------------- HUD
   function drawHUD() {
     if (!car) return;
+    if (TRACK.city) { drawCityHUD(); return; }
     const kmh = Math.round(car.speed * 0.35);
 
     // speed + gear + rpm + boost (top-left cluster)
@@ -4279,6 +5091,73 @@ function startGame() {
         12, 'rgba(255,255,255,0.55)');
   }
 
+  // ---------------------------------------------- NEO CITY HUD
+  function drawCityHUD() {
+    const c = CITY, onFoot = G.onFoot;
+    // red damage flash
+    if ((c.hitFlash || 0) > 0) {
+      ctx.fillStyle = 'rgba(255,40,40,' + (0.3 * clamp(c.hitFlash / 0.18, 0, 1)).toFixed(3) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.save();
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    // status line
+    ctx.font = FONT(900, 22);
+    ctx.fillStyle = onFoot ? '#7dffb0' : '#9fe8ff';
+    ctx.shadowColor = onFoot ? '#7dffb0' : '#55e0ff'; ctx.shadowBlur = 12;
+    ctx.fillText(onFoot ? '徒歩 ON FOOT' : Math.round(car.speed * 0.35) + ' km/h', 22, 42);
+    ctx.shadowBlur = 0;
+    // HP bar
+    ctx.font = FONT(700, 12); ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('体力 HEALTH', 22, 64);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(22, 70, 168, 9);
+    const hpf = clamp(c.hp / c.maxHp, 0, 1);
+    ctx.fillStyle = hpf > 0.5 ? '#7dffb0' : hpf > 0.25 ? '#ffd166' : '#ff5a5a';
+    ctx.fillRect(22, 70, 168 * hpf, 9);
+    // weapon / gear line
+    ctx.font = FONT(800, 13); ctx.fillStyle = '#ffd166';
+    ctx.fillText(onFoot ? '🔫 PISTOL · SPACE' : 'G' + car.gear, 22, 98);
+    ctx.restore();
+
+    // WANTED stars (top-right)
+    ctx.save();
+    ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    txt(ctx, '指名手配 WANTED', W - 22, 26, 12, 'rgba(255,255,255,0.7)', 'right', 800);
+    const flash = c.wanted > 0 && Math.floor(G.t * 6) % 2 === 0;
+    for (let i = 0; i < 5; i++) {
+      const on = i >= 5 - c.wanted;   // fill from the left
+      txt(ctx, '★', W - 30 - i * 26, 54, 22,
+        on ? (flash ? '#ffe27a' : '#ffb14d') : 'rgba(255,255,255,0.16)', 'center', 900, on ? 10 : 0);
+    }
+    ctx.restore();
+
+    // kill / event toast just under the stars
+    if (c.killT < 1) txt(ctx, c.killMsg, W - 78, 80, 15, '#ff8a8a', 'right', 900, 8);
+
+    // centre message
+    if (c.msgT < 3) {
+      const a = c.msgT < 2.4 ? 1 : clamp((3 - c.msgT) / 0.6, 0, 1);
+      ctx.save(); ctx.globalAlpha = a;
+      const big = c.state === 'wasted' || c.state === 'busted';
+      txt(ctx, c.msg, W / 2, big ? H * 0.42 : H * 0.16, big ? 44 : 15,
+        c.state === 'wasted' ? '#ff5a5a' : c.state === 'busted' ? '#ffd166' : '#9fe8ff',
+        'center', 900, big ? 20 : 6);
+      ctx.restore();
+    }
+
+    // bottom-left tally
+    txt(ctx, 'NEO CITY · ネオシティ · JACKS ' + c.jacks, 20, H - 22, 12, 'rgba(255,255,255,0.6)', 'left');
+
+    drawMinimap();
+    // control hints (first while cruising, and while on foot)
+    if (!G.touch || pad.connected) {
+      txt(ctx, onFoot ? 'WASD move · SPACE shoot · F get in car · R hospital'
+        : 'WASD drive · SPACE handbrake · F get out · R hospital', W / 2, H - 20,
+        12, 'rgba(255,255,255,0.5)');
+    }
+    if (SND.muted) txt(ctx, 'ミュート MUTED · M', W / 2, 16, 11, 'rgba(255,255,255,0.55)', 'center', 800);
+  }
+
   function drawMinimap() {
     if (!car || H < 420) return;
     const w = W < 560 ? 110 : MMW;
@@ -4291,6 +5170,22 @@ function startGame() {
     ctx.fill();
     ctx.drawImage(mm, x, y, w, h2);
     const k = w / TRACK.worldW;
+    if (TRACK.city) {
+      const c = CITY;
+      ctx.fillStyle = 'rgba(210,210,220,0.6)';
+      for (const v of c.cars) if (!v.police) { ctx.beginPath(); ctx.arc(x + v.x * k, y + v.y * k, 1.2, 0, TAU); ctx.fill(); }
+      ctx.fillStyle = '#5aa0ff';
+      for (const v of c.cars) if (v.police) { ctx.beginPath(); ctx.arc(x + v.x * k, y + v.y * k, 1.8, 0, TAU); ctx.fill(); }
+      ctx.fillStyle = '#ff4a4a';
+      for (const cp of c.cops) if (cp.state !== 'dead') { ctx.beginPath(); ctx.arc(x + cp.x * k, y + cp.y * k, 1.8, 0, TAU); ctx.fill(); }
+      const pp = c.playerPos();
+      ctx.shadowColor = '#7dffb0'; ctx.shadowBlur = 6; ctx.fillStyle = '#7dffb0';
+      ctx.beginPath(); ctx.arc(x + pp.x * k, y + pp.y * k, 3, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(x + pp.x * k, y + pp.y * k, 1.3, 0, TAU); ctx.fill();
+      ctx.restore();
+      return;
+    }
     if (traffic.length) {
       ctx.fillStyle = '#ffb14d';
       for (const t of traffic) {
@@ -4399,15 +5294,15 @@ function startGame() {
     const bob = Math.sin(G.t * 1.6) * 6;
     txt(ctx, 'アダムのレースルーム', W / 2, cy - 66 + bob, Math.min(34, W * 0.062), '#ffd166', 'center', 900, 22);
     txt(ctx, "ADAM'S RACE ROOM", W / 2, cy + bob, Math.min(54, W * 0.093), '#fff', 'center', 900, 26, '#ff5fb4');
-    txt(ctx, 'EBISU × MEIHAN × NORDSCHLEIFE', W / 2, cy + 52 + bob, Math.min(17, W * 0.042), '#9fe8ff', 'center', 800, 10);
-    txt(ctx, 'NEO 3D · 10 MACHINES · 3 CIRCUITS · 実寸ニュル', W / 2, cy + 82 + bob, 13, '#7dffb0', 'center', 800, 6);
+    txt(ctx, 'EBISU × MEIHAN × NORDSCHLEIFE × NEO CITY', W / 2, cy + 52 + bob, Math.min(15, W * 0.036), '#9fe8ff', 'center', 800, 10);
+    txt(ctx, 'NEO 3D · 10 MACHINES · 3 CIRCUITS + OPEN CITY', W / 2, cy + 82 + bob, 13, '#7dffb0', 'center', 800, 6);
     const bw = 260, bx = W / 2 - bw / 2, by = H * 0.66;
     const pulse = 0.6 + 0.4 * Math.sin(G.t * 3);
     panel(ctx, bx, by, bw, 54, 'rgba(255,209,102,' + pulse + ')', '#ffd166');
     txt(ctx, pad.connected ? 'A / START · スタート' : (G.touch ? 'タップ TAP TO START' : 'ENTER · スタート'),
       W / 2, by + 28, 19, '#ffd166', 'center', 900, 10);
     zones.push({ x: 0, y: 0, w: W, h: H, act: () => onPress('enter') });
-    txt(ctx, '桜 dusk · 名阪 sodium · 鋼 green hell — gears, turbo & traffic', W / 2, H - 24, 12, 'rgba(255,255,255,0.5)');
+    txt(ctx, '桜 dusk · 名阪 sodium · 鋼 green hell · ネオ open city — drive, roam & run', W / 2, H - 24, 12, 'rgba(255,255,255,0.5)');
   }
 
   // -------- track select: minimap silhouettes side by side
@@ -4416,7 +5311,8 @@ function startGame() {
     ctx.fillRect(0, 0, W, H);
     txt(ctx, 'コース COURSE', W / 2, H * 0.12, 28, '#fff', 'center', 900, 16, '#b06bff');
     const ids = Object.keys(TRACKS);
-    const cw = Math.min(280, W * (ids.length > 2 ? 0.295 : 0.42)), ch = Math.min(250, H * 0.44);
+    const cwf = ids.length >= 4 ? 0.225 : ids.length > 2 ? 0.295 : 0.42;
+    const cw = Math.min(260, W * cwf), ch = Math.min(250, H * 0.44);
     const gap = Math.min(30, W * 0.025);
     let x = W / 2 - (cw * ids.length + gap * (ids.length - 1)) / 2;
     const y = H * 0.24;
@@ -4430,7 +5326,20 @@ function startGame() {
         trackCache[id] = t2;
       }
       const tk = trackCache[id];
-      if (tk) {
+      if (id === 'city') {
+        // a little road-grid glyph (the city has no lap silhouette)
+        ctx.save();
+        const gx = x + cw / 2, gy = y + 16 + (ch - 108) / 2, gs = Math.min(cw - 60, ch - 130) * 0.5;
+        ctx.strokeStyle = on ? '#ffd166' : 'rgba(214,196,255,0.7)';
+        ctx.lineWidth = 3; ctx.lineJoin = 'round';
+        ctx.shadowColor = on ? '#ffd166' : 'transparent'; ctx.shadowBlur = on ? 8 : 0;
+        ctx.beginPath();
+        for (let t = -1; t <= 1; t++) {
+          ctx.moveTo(gx + t * gs * 0.5, gy - gs); ctx.lineTo(gx + t * gs * 0.5, gy + gs);
+          ctx.moveTo(gx - gs, gy + t * gs * 0.5); ctx.lineTo(gx + gs, gy + t * gs * 0.5);
+        }
+        ctx.stroke(); ctx.restore();
+      } else if (tk) {
         const P = tk.pts, pad = 26;
         const sc = Math.min((cw - pad * 2) / tk.worldW, (ch - 108) / tk.worldH);
         const ox2 = x + cw / 2 - tk.worldW * sc / 2, oy2 = y + 16;
@@ -4447,9 +5356,12 @@ function startGame() {
         ctx.stroke();
         ctx.restore();
       }
-      // fonts scale with the card so three cards survive a phone screen;
-      // tiny cards drop the jp name + blurb rather than spill over
-      const nameFs = Math.max(10, Math.min(19, cw * 0.105));
+      // fonts scale with the card so four cards survive a phone screen;
+      // measure the name and shrink it to fit; tiny cards drop jp + blurb
+      let nameFs = Math.min(19, cw * 0.105);
+      ctx.font = FONT(900, nameFs);
+      const nw = ctx.measureText(t.name).width, maxNw = cw - 12;
+      if (nw > maxNw) nameFs = Math.max(8, nameFs * maxNw / nw);
       txt(ctx, t.name, x + cw / 2, y + ch - 74, nameFs, on ? '#ffd166' : '#fff', 'center', 900, on ? 8 : 0);
       txt(ctx, cw < 190 ? t.len : t.jp + ' · ' + t.len, x + cw / 2, y + ch - 50, 12, '#ffb7d5', 'center', 800);
       if (cw >= 190) wrapText(t.desc, x + cw / 2, y + ch - 28, cw - 30, 11, 'rgba(255,255,255,0.7)');
@@ -4623,8 +5535,22 @@ function startGame() {
       ctx.fillStyle = st[b.id] ? '#ffd166' : '#ffffff';
       ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
       ctx.globalAlpha = 0.85;
-      txt(ctx, b.label, b.x, b.y + 1, b.r * 0.52, '#1a0e2e', 'center', 900);
+      // the handbrake button doubles as FIRE while on foot in the city
+      const lbl = (TRACK.city && G.onFoot && b.id === 'eb') ? '撃つ' : b.label;
+      txt(ctx, lbl, b.x, b.y + 1, b.r * 0.52, '#1a0e2e', 'center', 900);
       ctx.restore();
+    }
+    // NEO CITY: get in / out button (above the handbrake/fire cluster)
+    if (TRACK.city) {
+      const r = Math.min(W, H) * 0.075, pad = r * 0.5;
+      const fx = W - pad - r * 3.6, fy = H - pad - r * 5.0, fr = r * 0.9;
+      ctx.save();
+      ctx.globalAlpha = 0.32; ctx.fillStyle = '#7dffb0';
+      ctx.beginPath(); ctx.arc(fx, fy, fr, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 0.9;
+      txt(ctx, G.onFoot ? '乗る' : '降りる', fx, fy + 1, fr * 0.44, '#0c1a10', 'center', 900);
+      ctx.restore();
+      zones.push({ x: fx - fr, y: fy - fr, w: fr * 2, h: fr * 2, act: () => CITY.enterExit() });
     }
     // pause tap-target — without it a phone player can never pause,
     // respawn (pause menu has it) or leave a race
@@ -4747,7 +5673,7 @@ function startGame() {
       get G() { return G; }, get car() { return car; },
       get score() { return score; }, get lap() { return lap; },
       get TRACK() { return TRACK; }, get traffic() { return traffic; },
-      cam, props, CARS, onPress, fmtT, SND, SAVE, switchTrack, tick, QURAN, SURAHS
+      cam, props, CARS, onPress, fmtT, SND, SAVE, switchTrack, tick, QURAN, SURAHS, CITY
     };
   }
   requestAnimationFrame(frame);
