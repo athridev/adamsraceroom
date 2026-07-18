@@ -630,8 +630,11 @@ const trackGroup = new THREE.Group(); scene.add(trackGroup);
       c.fillStyle = '#55e0ff'; c.font = '900 34px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
       c.fillText('N O R D S C H L E I F E', w / 2, h / 2 + 2);
     });
+    // banner spans the beam (same yaw as the beam) and sits just off its
+    // face, pointed at oncoming traffic so it reads on approach
     const ban = new THREE.Mesh(new THREE.PlaneGeometry(e * 2 + 4, 1.3), new THREE.MeshBasicMaterial({ map: banTex, side: THREE.DoubleSide }));
-    ban.position.set(X, Y + 6.6, Z); ban.rotation.y = Math.atan2(LX, LZ);
+    ban.position.set(X, Y + 6.6, Z);
+    ban.rotation.y = Math.atan2(LX, LZ) + Math.PI / 2;
     ban.translateZ(.3); scene.add(ban);
     // five start lights under the beam
     const lightGeo = new THREE.BoxGeometry(.55, .55, .3);
