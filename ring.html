@@ -41,6 +41,8 @@ body.inmenu .hud,body.inmenu #wrong{display:none}
 #rpmWrap{width:230px;height:9px;background:#ffffff14;border-radius:5px;margin-top:8px;overflow:hidden;margin-left:auto}
 #rpm{height:100%;width:0%;background:linear-gradient(90deg,var(--gn),var(--yl) 62%,var(--rd) 88%);border-radius:5px}
 #rpmWrap.shift{box-shadow:0 0 14px 2px var(--rd)}
+#draftI{font-size:10px;font-weight:800;letter-spacing:3px;color:var(--cy);opacity:0;transition:opacity .25s;
+  text-shadow:0 0 10px #55e0ff88;margin-bottom:3px}
 #hudBL{bottom:max(16px,env(safe-area-inset-bottom));left:max(18px,env(safe-area-inset-left));font-size:11px;color:var(--dim);letter-spacing:1.5px;line-height:1.9}
 #hudBL b{color:var(--txt)}
 #hudBL .on{color:var(--gn)} #hudBL .off{color:var(--rd)}
@@ -90,7 +92,7 @@ h1.big{font-size:min(7vw,44px);font-weight:900;letter-spacing:6px;text-align:cen
 #backLink{position:fixed;top:max(14px,env(safe-area-inset-top));left:max(16px,env(safe-area-inset-left));z-index:60;
   color:var(--dim);text-decoration:none;font-size:12px;font-weight:800;letter-spacing:2px;pointer-events:auto}
 #backLink:hover{color:var(--cy)}
-#pauseM,#result{z-index:70;background:#0a0c12e6}
+#pauseM,#result{z-index:70;background:rgba(8,10,15,.66);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .menuCol{display:flex;flex-direction:column;gap:10px;width:min(320px,84vw)}
 .mBtn{pointer-events:auto;cursor:pointer;border:1px solid var(--line);border-radius:12px;background:var(--panel);
   color:var(--txt);font-weight:800;letter-spacing:2px;font-size:14px;padding:14px}
@@ -123,6 +125,7 @@ body.touch #hudBL{display:none}
 <div class="hud" id="pos"></div>
 <canvas class="hud" id="mini" width="316" height="316"></canvas>
 <div class="hud" id="hudBR">
+  <div id="draftI">SLIPSTREAM</div>
   <div><span id="gear">N</span><span id="speed">0<small> KM/H</small></span></div>
   <div id="rpmWrap"><div id="rpm"></div></div>
 </div>
@@ -130,7 +133,7 @@ body.touch #hudBL{display:none}
   <b>W/S</b> throttle · brake&nbsp;&nbsp;<b>A/D</b> steer&nbsp;&nbsp;<b>E/Q</b> shift&nbsp;&nbsp;<b>C</b> camera&nbsp;&nbsp;<b>R</b> reset<br>
   TC <span id="tcS" class="on">ON</span>&nbsp;&nbsp;ABS <span id="absS" class="on">ON</span>&nbsp;&nbsp;GEARBOX <span id="atS" class="on">AUTO</span>&nbsp;&nbsp;<span id="fpsS"></span>
 </div>
-<div id="wrong">WRONG WAY</div>
+<div id="wrong">WRONG WAY — R TO RESET</div>
 <div id="toast"></div>
 <div id="count"><span></span></div>
 
@@ -508,6 +511,7 @@ const checkerTex = mkTex(128, 32, (c, w, h) => {
 }, true, false);
 
 // ---------------- track meshes (chunked for culling) ----------------
+const startLights = [];
 const trackGroup = new THREE.Group(); scene.add(trackGroup);
 {
   const { N, px, py, pz, nx, nz, half, curv, dist } = T;
@@ -615,6 +619,16 @@ const trackGroup = new THREE.Group(); scene.add(trackGroup);
     const ban = new THREE.Mesh(new THREE.PlaneGeometry(e * 2 + 4, 1.3), new THREE.MeshBasicMaterial({ map: banTex, side: THREE.DoubleSide }));
     ban.position.set(X, Y + 6.6, Z); ban.rotation.y = Math.atan2(LX, LZ);
     ban.translateZ(.3); scene.add(ban);
+    // five start lights under the beam
+    const lightGeo = new THREE.BoxGeometry(.55, .55, .3);
+    for (let k = -2; k <= 2; k++) {
+      const m = new THREE.Mesh(lightGeo, new THREE.MeshStandardMaterial({
+        color: 0x1c0507, emissive: 0xff2418, emissiveIntensity: .06
+      }));
+      m.position.set(X + LX * k * 1.35, Y + 5.55, Z + LZ * k * 1.35);
+      m.rotation.y = Math.atan2(LX, LZ);
+      scene.add(m); startLights.push(m);
+    }
   }
 
   // trees — instanced Eifel forest
@@ -751,18 +765,21 @@ const CARS = [
   { id: 'p911', name: 'GT3-R', tag: 'FLAT-6 SCREAMER · KING OF THE GREEN HELL', num: 911,
     body: '#f4f2ec', accent: '#b8342a', glow: '#ff6a5e',
     stats: { power: 4, grip: 5, agility: 5 },
+    shape: [.97, 1, .985], stripe: 'twin',
     tune: { pow: 1.0, grip: 1.03, mass: 1245, red: 9400, idle: 1250 },
     eng: { base: 60, mul: 4.3, det: 7, filt: 3600, sub: .22, turbo: 0, pops: .5,
       harm: [0, 1, .30, .72, .18, .28, .42, .30, .22] } },
   { id: 'amg', name: 'AMG-GT3', tag: 'V8 THUNDER · THUNDERCLAP', num: 63,
     body: '#686d75', accent: '#16171c', glow: '#5dffb2',
     stats: { power: 5, grip: 4, agility: 3 },
+    shape: [1.02, .985, 1.035],
     tune: { pow: 1.05, grip: .99, mass: 1340, red: 7600, idle: 1000 },
     eng: { base: 36, mul: 2.9, det: 4, filt: 2400, sub: .52, turbo: 0, pops: .9,
       harm: [0, 1, .85, .30, .55, .15, .18, .08, .06] } },
   { id: 'r8', name: 'R8-LMS', tag: 'V10 WAIL · APEX ROAR', num: 5,
     body: '#c9cdd5', accent: '#c22a2a', glow: '#ff4438',
     stats: { power: 5, grip: 5, agility: 4 },
+    shape: [1.035, .955, 1], stripe: 'single',
     tune: { pow: 1.03, grip: 1.01, mass: 1290, red: 8700, idle: 1150 },
     eng: { base: 64, mul: 4.5, det: 9, filt: 3800, sub: .20, turbo: 0, pops: .4,
       harm: [0, 1, .25, .35, .30, .85, .35, .25, .40] } },
@@ -775,6 +792,7 @@ const CARS = [
   { id: 'gtr3', name: 'GT-R GT3', tag: 'TWIN TURBO V6 · PRIDE OF JAPAN', num: 23,
     body: '#23252b', accent: '#c22a2a', glow: '#ff2e44',
     stats: { power: 5, grip: 4, agility: 3 },
+    shape: [1.045, 1.02, 1.015],
     tune: { pow: 1.03, grip: .995, mass: 1310, red: 7800, idle: 1050 },
     eng: { base: 48, mul: 3.2, det: 8, filt: 2600, sub: .44, turbo: 1.0, tPitch: .9, spool: .45, pops: .6,
       harm: [0, 1, .55, .65, .40, .20, .25, .12, .08] } }
@@ -909,6 +927,13 @@ function buildCarMesh(spec) {
     g.add(hub);
     wheels.push({ hub, spin, front: !!front });
   }
+  if (spec.stripe) {                                 // hood + deck livery stripes
+    for (const sx of spec.stripe === 'twin' ? [-.24, .24] : [0]) {
+      add(new THREE.BoxGeometry(spec.stripe === 'twin' ? .17 : .44, .02, 1.45), accent, sx, .675, 1.66, .2);
+      add(new THREE.BoxGeometry(spec.stripe === 'twin' ? .17 : .44, .02, .8), accent, sx, .855, -1.5, .03);
+    }
+  }
+  if (spec.shape) g.scale.set(spec.shape[0], spec.shape[1], spec.shape[2]);
   return { group: g, wheels, tail, disc: discMat };
 }
 
@@ -1647,6 +1672,7 @@ function startRace() {
   } else {
     player.placeAt(LAP_LEN - 20, 0);
   }
+  player._preStart = true;                 // grid sits just before the line
   try { bestLap = JSON.parse(localStorage.getItem(bestKey(spec.id))); } catch { bestLap = null; }
   try { bestCp = JSON.parse(localStorage.getItem('r3d.cp.' + spec.id)); } catch { bestCp = null; }
   curCp = []; lastCpI = -1; $('delta').textContent = '';
@@ -1811,6 +1837,8 @@ function frame(now) {
 
   if (state === 'count') {
     goT -= dt;
+    const lit = goT > .6 ? clamp(Math.ceil((3.6 - goT) / .6), 0, 5) : 0;
+    startLights.forEach((m, i) => m.material.emissiveIntensity = i < lit ? 3.6 : .06);
     const el = $('count').firstElementChild;
     const n = Math.ceil(goT - .6);
     if (goT > .6) {
@@ -1873,11 +1901,17 @@ function frame(now) {
       if (cpI !== lastCpI) {
         if (lastCpI >= 0 && (cpI - lastCpI + NCP) % NCP === 1 && lapTime > .5) {
           curCp[cpI] = lapTime;
+          let ddStr = '';
           if (bestCp && typeof bestCp[cpI] === 'number') {
             const dd = lapTime - bestCp[cpI];
+            ddStr = (dd >= 0 ? '+' : '−') + Math.abs(dd).toFixed(2);
             const el = $('delta');
-            el.textContent = (dd >= 0 ? '+' : '−') + Math.abs(dd).toFixed(2);
+            el.textContent = ddStr;
             el.style.color = dd >= 0 ? '#ff6a5e' : '#7dffb0';
+          }
+          if (cpI === 70 || cpI === 140) {           // sector splits at 7 km / 14 km
+            toast('SECTOR ' + (cpI === 70 ? '1' : '2') + ' — ' + fmtT(lapTime) + (ddStr ? '  (' + ddStr + ')' : ''), 2400);
+            AU.beep(720, .1, .05);
           }
         }
         lastCpI = cpI;
@@ -1979,10 +2013,12 @@ function frame(now) {
     $('rpm').style.width = (rpm01 * 100).toFixed(1) + '%';
     $('rpmWrap').classList.toggle('shift', rpm01 > .95);
     $('lapT').textContent = fmtT(lapTime);
+    $('draftI').style.opacity = player.draft > .45 ? 1 : 0;
     $('wrong').style.display = player.wrongT > 1.2 ? 'block' : 'none';
     if (mode === 'race') {
+      if (player._preStart && player.sPrev < LAP_LEN / 2) player._preStart = false;
       let pos = 1;
-      const myProg = player.laps * LAP_LEN + player.sPrev;
+      const myProg = player.laps * LAP_LEN + player.sPrev - (player._preStart ? LAP_LEN : 0);
       for (const a of ais) if (a.totalProg() > myProg + 2) pos++;
       $('pos').innerHTML = 'P' + pos + '<small> / ' + (ais.length + 1) + '</small>';
     } else $('pos').textContent = '';
