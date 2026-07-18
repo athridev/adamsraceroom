@@ -17,6 +17,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 canvas#gl{display:block;position:fixed;inset:0;touch-action:none}
 .hud{position:fixed;pointer-events:none;z-index:10}
+body.inmenu .hud,body.inmenu #wrong{display:none}
 #hudTL{top:max(12px,env(safe-area-inset-top));left:max(14px,env(safe-area-inset-left));font-variant-numeric:tabular-nums;
   background:rgba(10,13,20,.42);padding:10px 16px 12px;border-radius:16px;border:1px solid #ffffff14;
   -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
@@ -53,31 +54,38 @@ canvas#gl{display:block;position:fixed;inset:0;touch-action:none}
 .screen{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;
   background:radial-gradient(120% 100% at 50% 0%,#141a28 0%,#0a0c12 62%);overflow:auto;padding:24px 12px}
 .screen.hidden{display:none}
+#menu{justify-content:space-between;overflow:hidden;
+  background:linear-gradient(180deg,rgba(9,11,17,.78) 0%,rgba(9,11,17,.25) 26%,rgba(9,11,17,0) 44%,
+    rgba(9,11,17,0) 55%,rgba(9,11,17,.35) 72%,rgba(9,11,17,.88) 100%)}
+#menuTop{display:flex;flex-direction:column;align-items:center;padding-top:max(6px,env(safe-area-inset-top))}
+#menuBottom{display:flex;flex-direction:column;align-items:center;gap:10px;padding-bottom:max(4px,env(safe-area-inset-bottom))}
 h1.big{font-size:min(7vw,44px);font-weight:900;letter-spacing:6px;text-align:center;
-  background:linear-gradient(90deg,var(--gn),var(--cy) 55%,var(--vi));-webkit-background-clip:text;background-clip:text;color:transparent}
-.subT{color:var(--dim);letter-spacing:3px;font-size:12px;font-weight:700;margin:6px 0 20px;text-align:center}
-#modeRow{display:flex;gap:10px;margin-bottom:20px}
-.modeBtn{pointer-events:auto;cursor:pointer;border:1px solid var(--line);border-radius:10px;background:var(--panel);
-  color:var(--dim);font-weight:800;letter-spacing:2px;font-size:12px;padding:10px 22px}
+  background:linear-gradient(90deg,var(--gn),var(--cy) 55%,var(--vi));-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 2px 10px #000c)}
+.subT{color:#aeb6c8;letter-spacing:3px;font-size:12px;font-weight:700;margin:6px 0 14px;text-align:center;text-shadow:0 1px 6px #000}
+#modeRow{display:flex;gap:10px;margin-bottom:8px}
+.modeBtn{pointer-events:auto;cursor:pointer;border:1px solid #ffffff1e;border-radius:12px;background:rgba(14,17,26,.55);
+  color:var(--dim);font-weight:800;letter-spacing:2px;font-size:12px;padding:10px 22px;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 .modeBtn.on{color:#0a0c12;background:var(--cy);border-color:var(--cy);box-shadow:0 0 18px #55e0ff55}
-#cars{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;max-width:980px}
-.card{pointer-events:auto;cursor:pointer;width:172px;border:1px solid var(--line);border-radius:14px;background:var(--panel);
-  padding:14px 12px;transition:transform .12s,border-color .12s,box-shadow .12s}
+#cars{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:980px}
+.card{pointer-events:auto;cursor:pointer;width:148px;border:1px solid #ffffff16;border-radius:14px;background:rgba(14,17,26,.55);
+  padding:11px 12px;transition:transform .12s,border-color .12s,box-shadow .12s;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 .card.sel{border-color:var(--cy);transform:translateY(-4px);box-shadow:0 8px 28px #55e0ff2e}
-.card .swatch{height:44px;border-radius:8px;margin-bottom:10px;position:relative;overflow:hidden}
-.card .num{position:absolute;right:6px;top:4px;font-weight:900;font-size:20px;color:#ffffffd9;text-shadow:0 1px 3px #0009}
-.card h3{font-size:16px;font-weight:900;letter-spacing:1px}
-.card .tag{font-size:9.5px;color:var(--dim);letter-spacing:.6px;margin:4px 0 8px;min-height:24px}
+.card .swatch{height:10px;border-radius:5px;margin-bottom:9px;position:relative;overflow:hidden}
+.card h3{font-size:15px;font-weight:900;letter-spacing:1px}
+.card .tag{font-size:9px;color:var(--dim);letter-spacing:.5px;margin:3px 0 7px;min-height:22px}
 .bars{display:grid;grid-template-columns:34px 1fr;gap:4px 6px;font-size:9px;color:var(--dim);letter-spacing:1px;align-items:center}
 .bar{height:5px;background:#ffffff12;border-radius:3px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:3px}
-#bestRow{margin:16px 0 4px;color:var(--dim);font-size:12px;letter-spacing:1.5px}
+#bestRow{margin:2px 0 0;color:#aeb6c8;font-size:12px;letter-spacing:1.5px;text-shadow:0 1px 6px #000}
 #bestRow b{color:var(--gn)}
-.cta{pointer-events:auto;cursor:pointer;margin-top:14px;border:none;border-radius:12px;padding:14px 54px;
+.cta{pointer-events:auto;cursor:pointer;margin-top:4px;border:none;border-radius:12px;padding:13px 54px;
   font-size:16px;font-weight:900;letter-spacing:4px;color:#0a0c12;background:linear-gradient(90deg,var(--gn),var(--cy));
   box-shadow:0 6px 26px #55e0ff44}
 .cta:active{transform:scale(.97)}
-.hint{margin-top:18px;color:#5b6275;font-size:11px;letter-spacing:1.5px;text-align:center;line-height:1.9}
+.hint{margin-top:6px;color:#787f92;font-size:10.5px;letter-spacing:1.5px;text-align:center;line-height:1.7;text-shadow:0 1px 4px #000}
 .hint b{color:var(--dim)}
 #backLink{position:fixed;top:max(14px,env(safe-area-inset-top));left:max(16px,env(safe-area-inset-left));z-index:60;
   color:var(--dim);text-decoration:none;font-size:12px;font-weight:800;letter-spacing:2px;pointer-events:auto}
@@ -128,17 +136,20 @@ body.touch #hudBL{display:none}
 <div class="tbtn" id="tB">BRAKE</div><div class="tbtn" id="tT">GAS</div>
 
 <div class="screen" id="menu">
-  <h1 class="big">NORDSCHLEIFE&nbsp;3D</h1>
-  <div class="subT">EIFEL · GERMANY — 20.832 KM · 73 CORNERS · 300 M OF ELEVATION</div>
-  <div id="modeRow">
-    <div class="modeBtn on" data-mode="race">RACE — GT3 FIELD</div>
-    <div class="modeBtn" data-mode="tt">TIME ATTACK</div>
+  <div id="menuTop">
+    <h1 class="big">NORDSCHLEIFE</h1>
+    <div class="subT">EIFEL · GERMANY — 20.832 KM · 73 CORNERS · 300 M OF ELEVATION</div>
+    <div id="modeRow">
+      <div class="modeBtn on" data-mode="race">RACE — GT3 FIELD</div>
+      <div class="modeBtn" data-mode="tt">TIME ATTACK</div>
+    </div>
   </div>
-  <div id="cars"></div>
-  <div id="bestRow"></div>
-  <button class="cta" id="startBtn">START ENGINE</button>
-  <div class="hint"><b>◂ ▸</b> CAR &nbsp; <b>▴ ▾</b> MODE &nbsp; <b>ENTER</b> START<br>
-  KEYBOARD · GAMEPAD · TOUCH SUPPORTED — SOUND ON RECOMMENDED</div>
+  <div id="menuBottom">
+    <div id="cars"></div>
+    <div id="bestRow"></div>
+    <button class="cta" id="startBtn">START ENGINE</button>
+    <div class="hint"><b>◂ ▸</b> CAR · <b>▴ ▾</b> MODE · <b>ENTER</b> START — KEYBOARD · GAMEPAD · TOUCH · SOUND ON</div>
+  </div>
 </div>
 
 <div class="screen hidden" id="pauseM">
@@ -380,7 +391,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), .04).texture;
 // post chain: subtle bloom for sun, brake bars and DRLs
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .3, .4, 1.2);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .28, .4, 1.4);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
 
@@ -760,12 +771,12 @@ ARCH_GEO.rotateZ(Math.PI / 2);                   // downward-opening shell, axis
 function buildCarMesh(spec) {
   const g = new THREE.Group();
   const paint = new THREE.MeshPhysicalMaterial({
-    color: spec.body, metalness: .85, roughness: .24,
-    clearcoat: 1, clearcoatRoughness: .14, envMapIntensity: 1.1
+    color: spec.body, metalness: .7, roughness: .3,
+    clearcoat: 1, clearcoatRoughness: .22, envMapIntensity: .75
   });
   const dark = new THREE.MeshStandardMaterial({ color: 0x0d0e12, metalness: .4, roughness: .6 });
   const glass = new THREE.MeshPhysicalMaterial({
-    color: 0x0a1016, metalness: 0, roughness: .05, clearcoat: 1, envMapIntensity: 1.5
+    color: 0x0a1016, metalness: 0, roughness: .1, clearcoat: 1, clearcoatRoughness: .08, envMapIntensity: .9
   });
   const accent = new THREE.MeshPhysicalMaterial({ color: spec.accent, metalness: .7, roughness: .28, clearcoat: .8 });
   const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
@@ -888,7 +899,10 @@ class EngineVoice {
     this.filt.type = 'lowpass'; this.filt.frequency.value = spec.filt || 2600; this.filt.Q.value = .8;
     const shaper = ctx.createWaveShaper();
     const curve = new Float32Array(257);
-    for (let i = 0; i <= 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(2.6 * x); }
+    for (let i = 0; i <= 256; i++) {
+      const x = i / 128 - 1;
+      curve[i] = Math.tanh(3.2 * x + .18 * x * x);   // asymmetric soft clip: even-order warmth
+    }
     shaper.curve = curve;
     this.sum = ctx.createGain(); this.sum.gain.value = .5;
     this.sum.connect(shaper); shaper.connect(this.filt); this.filt.connect(this.out);
@@ -910,6 +924,21 @@ class EngineVoice {
     this.sub = ctx.createOscillator(); this.sub.type = 'sine';
     this.subG = ctx.createGain(); this.subG.gain.value = 0;
     this.sub.connect(this.subG); this.subG.connect(this.out); this.sub.start();
+    if (!lite) {
+      // combustion roughness: slow noise wobbles the harmonic bus level
+      this.rSrc = ctx.createBufferSource(); this.rSrc.buffer = AU.noiseBuf; this.rSrc.loop = true;
+      this.rSrc.playbackRate.value = .08;
+      const rF = ctx.createBiquadFilter(); rF.type = 'lowpass'; rF.frequency.value = 14;
+      this.rG = ctx.createGain(); this.rG.gain.value = .13;
+      this.rSrc.connect(rF); rF.connect(this.rG); this.rG.connect(this.sum.gain);
+      this.rSrc.start();
+      // exhaust breath: band-passed noise tracking the firing frequency
+      this.eSrc = ctx.createBufferSource(); this.eSrc.buffer = AU.noiseBuf; this.eSrc.loop = true;
+      this.eF = ctx.createBiquadFilter(); this.eF.type = 'bandpass'; this.eF.Q.value = 1.4;
+      this.eG = ctx.createGain(); this.eG.gain.value = 0;
+      this.eSrc.connect(this.eF); this.eF.connect(this.eG); this.eG.connect(this.sum);
+      this.eSrc.start();
+    }
     if (!lite && spec.turbo) {
       this.tSrc = ctx.createBufferSource(); this.tSrc.buffer = AU.noiseBuf; this.tSrc.loop = true;
       this.tF = ctx.createBiquadFilter(); this.tF.type = 'bandpass'; this.tF.Q.value = 10;
@@ -917,13 +946,20 @@ class EngineVoice {
       this.tSrc.connect(this.tF); this.tF.connect(this.tG); this.tG.connect(AU.master);
       this.tSrc.start();
     }
-    this.boost = 0; this.cutT = 0; this.gain = 0;
+    this.boost = 0; this.cutT = 0; this.gain = 0; this.blipT = 0;
   }
   update(dt, rpm01, load, vol) {
     const ctx = AU.ctx, t = ctx.currentTime, s = this.spec;
     rpm01 = clamp(rpm01, 0, 1.05);
-    if (this.cutT > 0) { this.cutT -= dt; load *= .1; }
+    if (this.blipT > 0) {                          // heel-toe rev blip on downshifts
+      this.blipT -= dt;
+      rpm01 = Math.min(1.04, rpm01 + .1); load = Math.max(load, .9);
+    } else if (this.cutT > 0) { this.cutT -= dt; load *= .1; }
     const f0 = s.base * (1.0 + s.mul * rpm01) * .6;
+    if (this.eF) {
+      this.eF.frequency.setTargetAtTime(140 + f0 * 2.4, t, .03);
+      this.eG.gain.setTargetAtTime((.16 + .3 * load) * (s.sub || .3) * 2, t, .04);
+    }
     for (const os of this.oscs) os.o.frequency.setTargetAtTime(f0 * os.h, t, .016);
     const drive = .35 + .65 * load;
     for (const os of this.oscs) os.g.gain.setTargetAtTime(os.w * drive / this.oscs.length * 2.2, t, .03);
@@ -943,9 +979,12 @@ class EngineVoice {
     }
   }
   shiftCut(down, rpm01) {
-    this.cutT = .15;
-    AU.burst(3200, .07, .1, 'highpass', 1);
-    if (down || rpm01 > .7) this.pops(rpm01);
+    if (down) { this.blipT = .13; }                 // downshift: rev-match blip, no dead cut
+    else this.cutT = .14;
+    AU.burst(165, .09, .42, 'lowpass', 1);          // mechanical thunk
+    AU.burst(1350, .04, .1, 'bandpass', 4);         // dog-ring click
+    if (this.spec.turbo && !down) AU.burst(2500, .28, .1, 'highpass', 1);
+    if (down || rpm01 > .8) this.pops(rpm01);
   }
   pops(rpm01) {
     const n = 1 + Math.random() * 3 * (this.spec.pops || .4);
@@ -953,7 +992,13 @@ class EngineVoice {
       setTimeout(() => AU.burst(380 + Math.random() * 500, .05 + Math.random() * .05, .2 * (this.spec.pops || .4) * this.gain * 3), k * 55 + Math.random() * 40);
   }
   destroy() {
-    try { for (const os of this.oscs) os.o.stop(); this.sub.stop(); if (this.tSrc) this.tSrc.stop(); } catch {}
+    try {
+      for (const os of this.oscs) os.o.stop();
+      this.sub.stop();
+      if (this.tSrc) this.tSrc.stop();
+      if (this.rSrc) this.rSrc.stop();
+      if (this.eSrc) this.eSrc.stop();
+    } catch {}
     this.out.disconnect();
   }
 }
@@ -1032,7 +1077,7 @@ class PlayerCar {
     this.m = t.mass; this.Iz = t.mass * 1.28;
     this.mu = 1.56 * t.grip; this.red = t.red; this.pow = t.pow;
     this.x = 0; this.z = 0; this.yaw = 0; this.vx = 0; this.vy = 0; this.w = 0;
-    this.steer = 0; this.gear = 1; this.rpm = t.idle; this.shiftT = 0; this.holdT = 0;
+    this.steer = 0; this.gear = 1; this.rpm = t.idle; this.shiftT = 0; this.holdT = 0; this.brkS = 0;
     this.axPrev = 0; this.hint = 0; this.onGrass = false; this.onCurb = false;
     this.railHit = 0; this.brakeOn = false; this.slip = 0;
     this.odo = 0; this.sPrev = 0; this.laps = 0; this.wrongT = 0;
@@ -1090,7 +1135,7 @@ class PlayerCar {
     const down = 2.35 * v2;
     let FzF = this.m * G9 * CG_B / WB + down * .44;
     let FzR = this.m * G9 * CG_A / WB + down * .56;
-    const transfer = clamp(CG_H / WB * this.m * this.axPrev, -FzF * .7, FzR * .7);
+    const transfer = clamp(CG_H / WB * this.m * this.axPrev, -FzF * .42, FzR * .42);
     FzF -= transfer; FzR += transfer;
     FzF = Math.max(FzF, this.m * 1.2); FzR = Math.max(FzR, this.m * 1.2);
 
@@ -1100,9 +1145,11 @@ class PlayerCar {
     let engF = engTorque(rpmEff, this.red) * this.pow * gr * .92 / WHEEL_R * thr;
     if (this.shiftT > 0) engF = 0;
     if (this.rpm >= this.red * 1.03) engF *= .15;                     // limiter
-    const brkF = inp.brk * 27000;
-    let FxR = engF - brkF * .42 * Math.sign(this.vx || 1);
-    let FxF = -brkF * .58 * Math.sign(this.vx || 1);
+    // progressive pedal: braking ramps in, releases instantly — no snap lock-up
+    this.brkS += clamp(inp.brk - this.brkS, -dt * 8, dt * 2.8);
+    const brkF = this.brkS * 26500;
+    let FxR = engF - brkF * .38 * Math.sign(this.vx || 1);
+    let FxF = -brkF * .62 * Math.sign(this.vx || 1);
     // reverse: brake input below walking pace drives backwards
     if (inp.brk > 0 && this.vx < 1.0 && thr < .05) {
       FxR = this.vx > -8 ? -Math.min(5200, mu * FzR * .5) * inp.brk : 0;
@@ -1110,8 +1157,8 @@ class PlayerCar {
     }
     // understeer-biased grip split: rear holds harder than front → stable slides
     const muF = mu * .98, muR = mu * 1.07;
-    // ABS clamp
-    const absK = assists.abs ? .93 : 1.25;
+    // ABS clamp — leaves lateral headroom so the car still steers under braking
+    const absK = assists.abs ? .84 : 1.25;
     FxF = clamp(FxF, -muF * FzF * absK, muF * FzF * absK);
     // slip angles
     const vxs = Math.max(Math.abs(this.vx), .9);
@@ -1139,8 +1186,8 @@ class PlayerCar {
     const ax = (FxR + FxF * Math.cos(this.steer) - FyF * Math.sin(this.steer) + Fres) / this.m + this.vy * this.w;
     const ay = (FyF * Math.cos(this.steer) + FyR + FxF * Math.sin(this.steer)) / this.m - this.vx * this.w;
     let dw = (CG_A * (FyF * Math.cos(this.steer) + FxF * Math.sin(this.steer)) - CG_B * FyR) / this.Iz;
-    dw -= this.w * (1.3 + Math.min(2.6, spd * .05));               // tyre relaxation damping
-    dw += clamp(aR, -.5, .5) * (assists.tc ? 5.0 : 1.6);           // stability: catch rear breakaway
+    dw -= this.w * (1.3 + Math.min(2.6, spd * .05)) * (1 + this.brkS * .8);   // extra calm under braking
+    dw += clamp(aR, -.5, .5) * (assists.tc ? 5.0 : 1.6) * (1 + this.brkS * 1.3);  // stability: catch rear breakaway
     this.vx += ax * dt; this.vy += ay * dt; this.w += dw * dt;
     this.vy -= this.vy * Math.min(.8, dt * (0.9 + (this.onGrass ? 1.6 : 0)));  // sideways scrub → no endless slides
     this.axPrev = ax;
@@ -1386,6 +1433,29 @@ function toast(msg, ms = 2200) {
   clearTimeout(toast._t); toast._t = setTimeout(() => el.style.opacity = 0, ms);
 }
 
+// ---------- menu showroom: real car on the start line, orbiting camera ----------
+let previewCar = null, orbitA = 0;
+function updatePreview() {
+  if (previewCar) { scene.remove(previewCar); previewCar = null; }
+  const built = buildCarMesh(CARS[selIdx]);
+  previewCar = built.group;
+  previewCar.position.set(T.px[0], T.py[0], T.pz[0]);
+  previewCar.rotation.y = Math.atan2(T.tx[0], T.tz[0]);
+  scene.add(previewCar);
+}
+function orbitCamera(dt) {
+  if (!previewCar) return;
+  orbitA += dt * .2;
+  const p = previewCar.position;
+  const r = 10.5, h = 2.6 + Math.sin(orbitA * .6) * .5;
+  camPos.set(p.x + Math.sin(orbitA) * r, p.y + h, p.z + Math.cos(orbitA) * r);
+  camera.position.copy(camPos);
+  camera.lookAt(p.x, p.y + .5, p.z);
+  fovK = lerp(fovK || 46, 46, dt * 2);
+  camera.fov = fovK; camera.updateProjectionMatrix();
+  sun.position.set(p.x + 130, p.y + 190, p.z + 70);
+  sun.target.position.set(p.x, p.y, p.z);
+}
 // ---------- menu ----------
 function buildMenu() {
   const wrap = $('cars'); wrap.innerHTML = '';
@@ -1404,6 +1474,7 @@ function buildMenu() {
   $('bestRow').innerHTML = best ? `PERSONAL BEST — <b>${escapeHtml(fmtT(best))}</b> · ${escapeHtml(CARS[selIdx].name)}` : 'NO LAP RECORD YET — THE GREEN HELL AWAITS';
   document.querySelectorAll('.modeBtn').forEach(b =>
     b.classList.toggle('on', b.dataset.mode === mode));
+  updatePreview();
 }
 document.querySelectorAll('.modeBtn').forEach(b =>
   b.addEventListener('click', () => { mode = b.dataset.mode; buildMenu(); }));
@@ -1417,6 +1488,7 @@ function clearField() {
 function startRace() {
   AU.ensure(); AU.resume();
   clearField();
+  if (previewCar) { scene.remove(previewCar); previewCar = null; }
   const spec = CARS[selIdx];
   player = new PlayerCar(spec);
   player.voice = new EngineVoice(spec.eng, false);
@@ -1443,10 +1515,12 @@ function startRace() {
   state = 'count'; goT = 3.6;
   $('count').style.display = 'flex';
   $('backLink').style.display = 'none';
+  document.body.classList.remove('inmenu');
 }
 function endToMenu() {
   clearField(); state = 'menu';
   $('backLink').style.display = '';
+  document.body.classList.add('inmenu');
   $('menu').classList.remove('hidden'); $('pauseM').classList.add('hidden'); $('result').classList.add('hidden');
   $('count').style.display = 'none';
   if (AU.ctx) AU.ctx.resume();
@@ -1736,7 +1810,7 @@ function frame(now) {
   }
 
   smoke.update(dt);
-  updateCamera(dt);
+  if (state === 'menu') orbitCamera(dt); else updateCamera(dt);
   if (degraded === 0) composer.render(); else renderer.render(scene, camera);
 }
 
@@ -1748,11 +1822,8 @@ addEventListener('resize', () => {
 });
 addEventListener('pointerdown', () => { AU.ensure(); AU.resume(); }, { once: true });
 
+document.body.classList.add('inmenu');
 buildMenu();
-// menu attract camera: drift above the start straight
-camPos.set(T.px[0] + 40, T.py[0] + 30, T.pz[0] + 40);
-camera.position.copy(camPos);
-camera.lookAt(T.px[0], T.py[0], T.pz[0]);
 requestAnimationFrame(frame);
 </script>
 </body>
