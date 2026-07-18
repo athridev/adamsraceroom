@@ -1688,6 +1688,7 @@ function startGame() {
     ped: null, wanted: 0, wantedT: 0, hp: 100, maxHp: 100,
     state: 'drive', busyT: 0, bustT: 0, msg: '', msgT: 99, killMsg: '', killT: 99,
     fireCD: 0, enterCD: 0, kills: 0, jacks: 0,
+    cash: 0, job: null, jobCD: 3, streak: 0, heatPeak: 0,
 
     // ---- grid helpers ----
     onRoad(x, y) {
@@ -1769,9 +1770,15 @@ function startGame() {
       this.ped = null; this.wanted = 0; this.wantedT = 0; this.hp = this.maxHp;
       this.state = 'drive'; this.busyT = 0; this.bustT = 0; this.fireCD = 0; this.enterCD = 0;
       this.kills = 0; this.jacks = 0; this.msgT = 99; this.killT = 99;
+      this.cash = SAVE.data.cityCash || 0;
+      this.job = null; this.jobCD = 4; this.streak = 0; this.heatPeak = 0;
       G.onFoot = false;
       this.spawnInitial();
-      this.setMsg('NEO CITY · F to get out · roam free');
+      this.setMsg('NEO CITY · courier jobs pay — find the yellow marker');
+    },
+    addCash(n) {
+      this.cash += n;
+      SAVE.data.cityCash = this.cash; SAVE.write();
     },
 
     // ---- main update dispatch ----
@@ -1802,8 +1809,48 @@ function startGame() {
       this.updateBullets(dt);
       this.updateFx(dt);
       this.updateWanted(dt);
+      this.updateJobs(dt);
       this.stream(dt);
       this.camera(dt);
+    },
+    // ---- courier jobs: corona to corona, timed, streak + heat bonuses ----
+    updateJobs(dt) {
+      if (this.state !== 'drive') return;
+      const pp = this.playerPos(); if (!pp) return;
+      if (!this.job) {
+        this.jobCD -= dt;
+        if (this.jobCD <= 0) {
+          const p = this.roadPointNear(pp.x, pp.y, 1200, 2600);
+          this.job = { stage: 'offer', x: p.x, y: p.y };
+          this.setMsg('COURIER JOB — hit the yellow marker');
+        }
+        return;
+      }
+      const j = this.job;
+      const d = Math.hypot(pp.x - j.x, pp.y - j.y);
+      if (j.stage === 'offer') {
+        if (d < 60) {
+          const q = this.roadPointNear(j.x, j.y, 1800, 3800);
+          const run = Math.hypot(q.x - j.x, q.y - j.y);
+          this.job = { stage: 'run', x: q.x, y: q.y, t: 0, limit: 9 + run / 330, pay: Math.round(60 + run * 0.085) };
+          this.setMsg('PACKAGE UP — green marker, beat the clock');
+          SND.beep(760, 0.08, 'square', 0.05);
+        }
+        return;
+      }
+      j.t += dt;
+      if (d < 60) {
+        const mult = 1 + this.streak * 0.15 + this.wanted * 0.4;
+        const total = Math.round(j.pay * mult);
+        this.addCash(total);
+        this.streak++;
+        this.setMsg('DELIVERED +$' + total + (this.streak > 1 ? ' · STREAK ×' + this.streak : ''));
+        SND.beep(920, 0.14, 'square', 0.06);
+        this.job = null; this.jobCD = 3;
+      } else if (j.t > j.limit) {
+        this.setMsg('DELIVERY BLOWN — package gone cold');
+        this.job = null; this.jobCD = 6; this.streak = 0;
+      }
     },
 
     camera(dt) {
@@ -1825,6 +1872,8 @@ function startGame() {
       // wake up at the central "hospital" intersection, heat cleared
       const x = TRACK.cx, y = TRACK.cy + TRACK.BLOCK;
       G.onFoot = false; this.state = 'drive';
+      this.heatPeak = 0;                                   // no getaway pay after a bust
+      if (this.job && this.job.stage === 'run') { this.job = null; this.jobCD = 5; this.streak = 0; }
       this.hp = this.maxHp; this.wanted = 0; this.wantedT = 0; this.bustT = 0; this.hitFlash = 0;
       G.shake = 0;
       this.cops = []; this.bullets = []; this.cars = this.cars.filter(v => !v.police);
@@ -2173,6 +2222,7 @@ function startGame() {
     // ---- crime / heat (police response added below) ----
     crime(amt, label) {
       this.wanted = Math.min(5, this.wanted + amt);
+      this.heatPeak = Math.max(this.heatPeak, this.wanted);
       this.wantedT = 0;
       if (label) this.setMsg(label);
     },
@@ -2278,16 +2328,24 @@ function startGame() {
       const wantCars = Math.min(6, this.wanted + 1), wantFoot = Math.min(6, this.wanted);
       const copCars = this.cars.filter(v => v.police).length;
       if (copCars < wantCars && Math.random() < dt * 1.8) this.cars.push(this.makeCopCar(tgt));
+      // foot cops only close in when you're on foot or crawling — at speed
+      // it's a car chase, and outrunning it actually cools the heat
       const liveFoot = this.cops.filter(c => c.state !== 'dead').length;
-      if (liveFoot < wantFoot && Math.random() < dt * 1.3) this.cops.push(this.makeCopPed(tgt));
+      const footOK = G.onFoot || (car && car.speed < 200);
+      if (liveFoot < wantFoot && footOK && Math.random() < dt * 1.3) this.cops.push(this.makeCopPed(tgt));
       let seen = false;
-      // cop cars pursue + ram
-      for (const v of this.cars) {
+      // cop cars pursue + ram; ones that fall far behind lose the scent
+      for (let ci = this.cars.length - 1; ci >= 0; ci--) {
+        const v = this.cars[ci];
         if (!v.police) continue;
         const dx = tgt.x - v.x, dy = tgt.y - v.y, dist = Math.hypot(dx, dy) || 1;
-        if (dist < 300) seen = true;   // only *close* cops pin the heat → distance cools it
+        if (dist > 1500) {
+          v.cold = (v.cold || 0) + dt;
+          if (v.cold > 2.5) { this.cars.splice(ci, 1); continue; }   // lost you
+        } else v.cold = 0;
+        if (dist < 210) seen = true;   // only *close* cops pin the heat → distance cools it
         v.h += angNorm(Math.atan2(dy, dx) - v.h) * clamp(dt * 3.5, 0, 1);
-        v.speed = lerp(v.speed, dist > 50 ? 320 : 0, clamp(dt * 3, 0, 1));
+        v.speed = lerp(v.speed, dist > 50 ? 320 + this.wanted * 16 : 0, clamp(dt * 3, 0, 1));
         v.x += Math.cos(v.h) * v.speed * dt; v.y += Math.sin(v.h) * v.speed * dt;
         this.resolveEnt(v, 20); v.flash += dt;
         if (!G.onFoot && dist < 30) { G.shake = Math.max(G.shake, 1.8); this.hurtPlayer(22 * dt); }
@@ -2297,7 +2355,7 @@ function startGame() {
         const cop = this.cops[i];
         if (cop.state === 'dead') { cop.deadT += dt; if (cop.deadT > 6.5) this.cops.splice(i, 1); continue; }
         const dx = tgt.x - cop.x, dy = tgt.y - cop.y, dist = Math.hypot(dx, dy) || 1;
-        if (dist < 300) seen = true;
+        if (dist < 240) seen = true;
         cop.h = Math.atan2(dy, dx); cop.walk += dt * 15;
         const spd = dist > 74 ? 132 : 0;
         cop.x += dx / dist * spd * dt; cop.y += dy / dist * spd * dt;
@@ -2318,7 +2376,19 @@ function startGame() {
       this.wantedT += dt;
       this.hitFlash = Math.max(0, (this.hitFlash || 0) - dt);
       const cool = this.wanted >= 4 ? 15 : this.wanted >= 2 ? 11 : 8;
-      if (this.wanted > 0 && this.wantedT > cool) { this.wanted--; this.wantedT = 0; if (this.wanted === 0) this.setMsg('HEAT OFF'); }
+      if (this.wanted > 0 && this.wantedT > cool) {
+        this.wanted--; this.wantedT = 0;
+        if (this.wanted === 0) {
+          // shaking the heat pays — clean getaways scale with how hot it got
+          if (this.heatPeak >= 2) {
+            const pay = this.heatPeak * this.heatPeak * 55;
+            this.addCash(pay);
+            this.setMsg('CLEAN GETAWAY +$' + pay);
+            SND.beep(880, 0.12, 'square', 0.06);
+          } else this.setMsg('HEAT OFF');
+          this.heatPeak = 0;
+        }
+      }
     },
     updateFx(dt) {
       for (let i = this.fx.length - 1; i >= 0; i--) {
@@ -2332,6 +2402,7 @@ function startGame() {
     render(g) {
       this.drawGround(g);
       drawSkids();
+      this.drawJobMarker(g);
       if (!G.onFoot && car) drawBeams(car);        // headlights on the asphalt
       const view = viewHalfExtents(320);
       const vw = view.x, vh = view.y;
@@ -2435,6 +2506,29 @@ function startGame() {
       g.restore();
     },
     vis(e, vw, vh, pad) { return Math.abs(e.x - cam.x) < vw + pad && Math.abs(e.y - cam.y) < vh + pad; },
+
+    // GTA-style pulsing corona on the road for the current courier job
+    drawJobMarker(g) {
+      const j = this.job;
+      if (!j || this.state !== 'drive') return;
+      const col = j.stage === 'offer' ? '#ffd166' : '#7dffb0';
+      const pulse = 1 + Math.sin(G.t * 5) * 0.12;
+      g.save();
+      g.translate(j.x, j.y);
+      g.globalAlpha = 0.22;
+      g.fillStyle = col;
+      g.beginPath(); g.arc(0, 0, 46 * pulse, 0, TAU); g.fill();
+      g.globalAlpha = 0.9;
+      g.strokeStyle = col; g.lineWidth = 5;
+      g.beginPath(); g.arc(0, 0, 46 * pulse, 0, TAU); g.stroke();
+      g.rotate(G.t * 1.6);                          // rotating chevrons
+      g.lineWidth = 4; g.globalAlpha = 0.75;
+      for (let k = 0; k < 3; k++) {
+        g.rotate(TAU / 3);
+        g.beginPath(); g.arc(0, 0, 62 * pulse, -0.35, 0.35); g.stroke();
+      }
+      g.restore();
+    },
 
     drawGround(g) {
       const view = viewHalfExtents(90), vw = view.x, vh = view.y;
@@ -5418,6 +5512,11 @@ function startGame() {
     ctx.fillStyle = onFoot ? '#ffd166' : 'rgba(255,255,255,0.45)';
     ctx.fillText(onFoot ? (touching ? 'PISTOL · tap FIRE' : 'PISTOL · SPACE to fire')
       : (touching ? 'tap EXIT to get out' : 'F to get out'), 22, 100);
+    // bankroll (narrow screens put the wanted stars at y≈124, so drop below)
+    ctx.font = FONT(900, 17);
+    ctx.fillStyle = '#7dffb0'; ctx.shadowColor = '#7dffb0'; ctx.shadowBlur = 8;
+    ctx.fillText('$' + c.cash.toLocaleString(), 22, W < 620 ? 146 : 124);
+    ctx.shadowBlur = 0;
     ctx.restore();
 
     // ---- WANTED stars ----
@@ -5457,6 +5556,29 @@ function startGame() {
     if (c.killT < 1 && c.state === 'drive')
       txt(ctx, c.killMsg, W / 2, toastY + 22, 14, '#ff8a8a', 'center', 900, 8);
 
+    // ---- courier guidance: countdown + arrow toward the marker ----
+    if (c.job && c.state === 'drive') {
+      const j = c.job, pp = c.playerPos();
+      if (pp) {
+        const dx = j.x - pp.x, dy = j.y - pp.y;
+        const dist = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
+        const gy = toastY + 46;
+        if (j.stage === 'run') {
+          const left = Math.max(0, j.limit - j.t);
+          const urgent = left < 5 && Math.floor(G.t * 6) % 2 === 0;
+          txt(ctx, left.toFixed(1) + 's · $' + j.pay, W / 2, gy, 16,
+            urgent ? '#ff5a5a' : '#7dffb0', 'center', 900, 8);
+        }
+        const col = j.stage === 'offer' ? '#ffd166' : '#7dffb0';
+        ctx.save();
+        ctx.translate(W / 2, gy + 24); ctx.rotate(ang);
+        ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(-8, -7.5); ctx.lineTo(-8, 7.5); ctx.closePath(); ctx.fill();
+        ctx.restore();
+        txt(ctx, Math.round(dist / 10) + 'm', W / 2 + 32, gy + 29, 12, 'rgba(255,255,255,0.7)', 'left', 800);
+      }
+    }
+
     // ---- WASTED / BUSTED: a real full-screen card, not a toast ----
     if (c.state === 'wasted' || c.state === 'busted') {
       const dead = c.state === 'wasted';
@@ -5474,7 +5596,8 @@ function startGame() {
     }
 
     // bottom-left tally
-    txt(ctx, 'NEO CITY · JACKS ' + c.jacks + ' · WANTED ' + c.wanted,
+    txt(ctx, 'NEO CITY · $' + c.cash.toLocaleString() + ' · JACKS ' + c.jacks
+      + (c.streak > 1 ? ' · STREAK ×' + c.streak : ''),
       20, H - 22, 12, 'rgba(255,255,255,0.6)', 'left');
 
     drawMinimap();
@@ -5507,6 +5630,12 @@ function startGame() {
       for (const v of c.cars) if (v.police) { ctx.beginPath(); ctx.arc(x + v.x * k, y + v.y * k, 1.8, 0, TAU); ctx.fill(); }
       ctx.fillStyle = '#ff4a4a';
       for (const cp of c.cops) if (cp.state !== 'dead') { ctx.beginPath(); ctx.arc(x + cp.x * k, y + cp.y * k, 1.8, 0, TAU); ctx.fill(); }
+      if (c.job) {
+        const jc = c.job.stage === 'offer' ? '#ffd166' : '#7dffb0';
+        ctx.fillStyle = jc; ctx.shadowColor = jc; ctx.shadowBlur = 6;
+        ctx.beginPath(); ctx.arc(x + c.job.x * k, y + c.job.y * k, 2.6 + Math.sin(G.t * 6) * 0.8, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
       const pp = c.playerPos();
       ctx.shadowColor = '#7dffb0'; ctx.shadowBlur = 6; ctx.fillStyle = '#7dffb0';
       ctx.beginPath(); ctx.arc(x + pp.x * k, y + pp.y * k, 3, 0, TAU); ctx.fill();
