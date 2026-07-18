@@ -49,6 +49,8 @@ body.inmenu .hud,body.inmenu #wrong{display:none}
 #wrong{position:fixed;top:34%;left:50%;transform:translateX(-50%);font-size:30px;font-weight:900;
   letter-spacing:6px;color:var(--rd);text-shadow:0 0 24px #ff443888;display:none;animation:blink .5s steps(2) infinite}
 @keyframes blink{50%{opacity:.25}}
+#flash{position:fixed;inset:0;pointer-events:none;z-index:25;opacity:0;transition:opacity .12s;
+  background:radial-gradient(ellipse at center,transparent 52%,rgba(255,44,32,.5) 100%)}
 #toast{position:fixed;top:22%;left:50%;transform:translateX(-50%);font-size:22px;font-weight:800;letter-spacing:2px;
   color:var(--yl);text-shadow:0 2px 12px #000;opacity:0;transition:opacity .4s;text-align:center}
 #count{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:40;pointer-events:none}
@@ -134,6 +136,7 @@ body.touch #hudBL{display:none}
   TC <span id="tcS" class="on">ON</span>&nbsp;&nbsp;ABS <span id="absS" class="on">ON</span>&nbsp;&nbsp;GEARBOX <span id="atS" class="on">AUTO</span>&nbsp;&nbsp;<span id="fpsS"></span>
 </div>
 <div id="wrong">WRONG WAY — R TO RESET</div>
+<div id="flash"></div>
 <div id="toast"></div>
 <div id="count"><span></span></div>
 
@@ -707,11 +710,13 @@ const trackGroup = new THREE.Group(); scene.add(trackGroup);
   const postGeo = new THREE.CylinderGeometry(.05, .05, 1.25, 6);
   const postMat = new THREE.MeshStandardMaterial({ color: 0x2e3138, roughness: .6 });
   let lastMark = -1e9;
+  const brakeCorners = [];
   for (let i = 0; i < N; i++) {
     const v = T.aiV[i];
     if (v < 33 && v <= T.aiV[(i - 1 + N) % N] && v <= T.aiV[(i + 1) % N] && T.dist[i] - lastMark > 400) {
       lastMark = T.dist[i];
       const side = -Math.sign(T.curv[i] || 1);          // outside of the corner
+      brakeCorners.push({ i, side });
       for (let b = 0; b < 3; b++) {
         const j = ((i - Math.round(100 * (b + 1) / T.step)) % N + N) % N;
         const d = T.half[j] + 2.6;
@@ -756,6 +761,48 @@ const trackGroup = new THREE.Group(); scene.add(trackGroup);
     stand.rotation.y = yaw;
     scene.add(stand);
   }
+
+  // tyre stacks behind the rail at every braking corner
+  const stackGeo = mergeGeometries([
+    new THREE.TorusGeometry(.42, .17, 7, 12).rotateX(Math.PI / 2).translate(0, .17, 0),
+    new THREE.TorusGeometry(.42, .17, 7, 12).rotateX(Math.PI / 2).translate(0, .49, 0),
+    new THREE.TorusGeometry(.42, .17, 7, 12).rotateX(Math.PI / 2).translate(0, .81, 0)
+  ].map(g => g.toNonIndexed()));
+  const stackSpots = [];
+  for (const c of brakeCorners)
+    for (let k = -2; k <= 2; k++) {
+      const j = ((c.i + k * 2) % N + N) % N;
+      const d = T.half[j] + RAIL_OFF + 1.8;
+      stackSpots.push({ x: T.px[j] + T.nx[j] * c.side * d, y: T.py[j] - .32, z: T.pz[j] + T.nz[j] * c.side * d });
+    }
+  const dark2 = stackSpots.filter((s, i) => i % 3 !== 0), red2 = stackSpots.filter((s, i) => i % 3 === 0);
+  const mkStacks = (spots, col) => {
+    const im = new THREE.InstancedMesh(stackGeo, new THREE.MeshStandardMaterial({ color: col, roughness: .95 }), spots.length);
+    const dm = new THREE.Object3D();
+    spots.forEach((s, i) => {
+      dm.position.set(s.x, s.y, s.z); dm.rotation.y = h01(i * 4.1) * TAU;
+      dm.updateMatrix(); im.setMatrixAt(i, dm.matrix);
+    });
+    im.castShadow = true; scene.add(im);
+  };
+  mkStacks(dark2, 0x1b1c20); mkStacks(red2, 0x8f2f2a);
+
+  // armco posts, both sides
+  const postCount = Math.ceil(N / 3) * 2;
+  const postsIM = new THREE.InstancedMesh(new THREE.BoxGeometry(.13, .82, .16),
+    new THREE.MeshStandardMaterial({ color: 0x596069, metalness: .55, roughness: .5 }), postCount);
+  {
+    const dm = new THREE.Object3D();
+    let pi = 0;
+    for (let i = 0; i < N; i += 3) for (const s of [1, -1]) {
+      const d = T.half[i] + RAIL_OFF;
+      dm.position.set(T.px[i] + T.nx[i] * s * d, T.py[i] + .18, T.pz[i] + T.nz[i] * s * d);
+      dm.rotation.y = Math.atan2(T.tx[i], T.tz[i]);
+      dm.updateMatrix(); postsIM.setMatrixAt(pi++, dm.matrix);
+    }
+    postsIM.count = pi;
+    scene.add(postsIM);
+  }
 }
 
 // ==================================================================
@@ -765,34 +812,57 @@ const CARS = [
   { id: 'p911', name: 'GT3-R', tag: 'FLAT-6 SCREAMER · KING OF THE GREEN HELL', num: 911,
     body: '#f4f2ec', accent: '#b8342a', glow: '#ff6a5e',
     stats: { power: 4, grip: 5, agility: 5 },
-    shape: [.97, 1, .985], stripe: 'twin',
+    stripe: 'twin',
+    loft: { width: [[0, .84], [.14, .9], [.5, .86], [.82, .83], [1, .75]],
+      top: [[0, .73], [.12, .79], [.5, .73], [.82, .6], [1, .52]],
+      exp: [[0, 2.7], [1, 2.5]], archAmp: .13 },
+    glass: { z: [-1.78, 1.32], width: [[0, .5], [.4, .62], [1, .46]],
+      top: [[0, .78], [.3, 1.05], [.62, 1.07], [1, .76]], bot: [[0, .68], [1, .66]], exp: [[0, 2.2], [1, 2.2]] },
     tune: { pow: 1.0, grip: 1.03, mass: 1245, red: 9400, idle: 1250 },
     eng: { base: 60, mul: 4.3, det: 7, filt: 3600, sub: .22, turbo: 0, pops: .5,
       harm: [0, 1, .30, .72, .18, .28, .42, .30, .22] } },
   { id: 'amg', name: 'AMG-GT3', tag: 'V8 THUNDER · THUNDERCLAP', num: 63,
     body: '#686d75', accent: '#16171c', glow: '#5dffb2',
     stats: { power: 5, grip: 4, agility: 3 },
-    shape: [1.02, .985, 1.035],
+    loft: { width: [[0, .88], [.16, .92], [.55, .9], [.85, .86], [1, .8]],
+      top: [[0, .74], [.18, .8], [.6, .77], [.9, .6], [1, .5]],
+      exp: [[0, 3.1], [1, 2.9]], archAmp: .11 },
+    glass: { z: [-1.95, .95], width: [[0, .52], [.4, .64], [1, .5]],
+      top: [[0, .8], [.32, 1.06], [.64, 1.08], [1, .78]], bot: [[0, .7], [1, .68]], exp: [[0, 2.3], [1, 2.3]] },
     tune: { pow: 1.05, grip: .99, mass: 1340, red: 7600, idle: 1000 },
     eng: { base: 36, mul: 2.9, det: 4, filt: 2400, sub: .52, turbo: 0, pops: .9,
       harm: [0, 1, .85, .30, .55, .15, .18, .08, .06] } },
   { id: 'r8', name: 'R8-LMS', tag: 'V10 WAIL · APEX ROAR', num: 5,
     body: '#c9cdd5', accent: '#c22a2a', glow: '#ff4438',
     stats: { power: 5, grip: 5, agility: 4 },
-    shape: [1.035, .955, 1], stripe: 'single',
+    stripe: 'single',
+    loft: { width: [[0, .93], [.2, .96], [.55, .95], [.85, .9], [1, .82]],
+      top: [[0, .67], [.2, .71], [.6, .69], [.9, .58], [1, .5]],
+      exp: [[0, 3.3], [1, 3]], archAmp: .12 },
+    glass: { z: [-1.5, 1.2], width: [[0, .54], [.4, .66], [1, .5]],
+      top: [[0, .74], [.34, .99], [.66, 1.0], [1, .72]], bot: [[0, .64], [1, .62]], exp: [[0, 2.4], [1, 2.4]] },
     tune: { pow: 1.03, grip: 1.01, mass: 1290, red: 8700, idle: 1150 },
     eng: { base: 64, mul: 4.5, det: 9, filt: 3800, sub: .20, turbo: 0, pops: .4,
       harm: [0, 1, .25, .35, .30, .85, .35, .25, .40] } },
   { id: 'm4', name: 'M4-GT3', tag: 'TURBO I6 PUNCH · TWIN-SCROLL SIX', num: 46,
     body: '#eef0f4', accent: '#2b4bd7', glow: '#55e0ff',
     stats: { power: 5, grip: 5, agility: 4 },
+    loft: { width: [[0, .87], [.15, .91], [.55, .88], [.85, .85], [1, .78]],
+      top: [[0, .74], [.15, .79], [.55, .74], [.85, .61], [1, .53]],
+      exp: [[0, 3.6], [1, 3.2]], archAmp: .10 },
+    glass: { z: [-1.7, 1.25], width: [[0, .52], [.4, .63], [1, .48]],
+      top: [[0, .79], [.3, 1.05], [.62, 1.06], [1, .77]], bot: [[0, .69], [1, .67]], exp: [[0, 2.6], [1, 2.6]] },
     tune: { pow: 1.02, grip: 1.005, mass: 1300, red: 7400, idle: 1000 },
     eng: { base: 45, mul: 3.4, det: 6, filt: 2700, sub: .40, turbo: .9, tPitch: 1.0, spool: .35, pops: .7,
       harm: [0, 1, .38, .78, .22, .25, .45, .10, .10] } },
   { id: 'gtr3', name: 'GT-R GT3', tag: 'TWIN TURBO V6 · PRIDE OF JAPAN', num: 23,
     body: '#23252b', accent: '#c22a2a', glow: '#ff2e44',
     stats: { power: 5, grip: 4, agility: 3 },
-    shape: [1.045, 1.02, 1.015],
+    loft: { width: [[0, .92], [.18, .95], [.55, .93], [.85, .89], [1, .82]],
+      top: [[0, .77], [.15, .83], [.55, .79], [.85, .64], [1, .55]],
+      exp: [[0, 4.6], [1, 4]], archAmp: .16 },
+    glass: { z: [-1.65, 1.2], width: [[0, .55], [.4, .66], [1, .5]],
+      top: [[0, .82], [.3, 1.08], [.6, 1.09], [1, .79]], bot: [[0, .72], [1, .7]], exp: [[0, 3], [1, 3]] },
     tune: { pow: 1.03, grip: .995, mass: 1310, red: 7800, idle: 1050 },
     eng: { base: 48, mul: 3.2, det: 8, filt: 2600, sub: .44, turbo: 1.0, tPitch: .9, spool: .45, pops: .6,
       harm: [0, 1, .55, .65, .40, .20, .25, .12, .08] } }
@@ -815,42 +885,64 @@ function spokeTex() {
 }
 const SPOKE = spokeTex();
 
-// Car authored nose → +z. Smooth extruded GT hull, badge-free.
-function extrudeProfile(shape, depth, bevel) {
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth, bevelEnabled: true, bevelSize: bevel, bevelThickness: bevel, bevelSegments: 3, steps: 1, curveSegments: 10
-  });
-  geo.rotateY(-Math.PI / 2);                     // shape(x=carZ) → world z, extrusion → width
-  geo.computeBoundingBox();
-  geo.translate(-(geo.boundingBox.min.x + geo.boundingBox.max.x) / 2, 0, 0);
-  geo.computeVertexNormals();
-  return geo;
+// Car bodies: swept superellipse loft — smooth curved hulls with flared
+// arches and real wheel openings, tuned per machine. Badge-free.
+function evProf(pts, t) {
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (t >= pts[i][0] && t <= pts[i + 1][0]) {
+      const u = (t - pts[i][0]) / (pts[i + 1][0] - pts[i][0]);
+      return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * (.5 - .5 * Math.cos(Math.PI * u));
+    }
+  }
+  return pts[pts.length - 1][1];
 }
-const BODY_GEO = (() => {
-  const S = new THREE.Shape();
-  S.moveTo(-2.34, .30);
-  S.lineTo(-2.38, .74);                          // tail face
-  S.lineTo(-1.75, .84);                          // deck
-  S.lineTo(1.30, .76);                           // beltline
-  S.quadraticCurveTo(1.85, .70, 2.26, .56);      // hood fall
-  S.lineTo(2.32, .30);                           // nose face
-  S.lineTo(2.05, .20);
-  S.lineTo(-2.05, .20);                          // floor
-  S.closePath();
-  return extrudeProfile(S, 1.56, .12);
-})();
-const CANOPY_GEO = (() => {
-  const C = new THREE.Shape();
-  C.moveTo(-1.55, .78);
-  C.quadraticCurveTo(-1.05, 1.06, -.35, 1.10);   // fastback rear glass
-  C.lineTo(.35, 1.10);                           // roof
-  C.quadraticCurveTo(.95, 1.03, 1.42, .74);      // raked windshield
-  C.lineTo(1.10, .70);
-  C.lineTo(-1.30, .72);
-  C.closePath();
-  return extrudeProfile(C, .92, .20);
-})();
-const ARCH_GEO = new THREE.CylinderGeometry(.46, .46, .36, 14, 1, true, 0, Math.PI);
+function loftBody(P) {
+  const M = 48, K = 24, pos = [], idx = [];
+  for (let i = 0; i < M; i++) {
+    const t = i / (M - 1), z = lerp(P.tail, P.nose, t);
+    let hw = evProf(P.width, t);
+    for (const a of P.arches || []) hw += a.amp * Math.exp(-((z - a.z) ** 2) / (2 * a.w * a.w));
+    const top = evProf(P.top, t), bot = evProf(P.bot, t);
+    const n = evProf(P.exp, t), cy = (top + bot) / 2, hh = Math.max(.02, (top - bot) / 2);
+    for (let k = 0; k < K; k++) {
+      const u = k / K * TAU, c = Math.cos(u), s = Math.sin(u);
+      pos.push(hw * Math.sign(c) * Math.pow(Math.abs(c), 2 / n),
+               cy + hh * Math.sign(s) * Math.pow(Math.abs(s), 2 / n), z);
+    }
+  }
+  for (let i = 0; i < M - 1; i++) for (let k = 0; k < K; k++) {
+    const a = i * K + k, b = i * K + (k + 1) % K, c = a + K, d = b + K;
+    idx.push(a, b, c, b, d, c);
+  }
+  const tailC = pos.length / 3;
+  pos.push(0, (evProf(P.top, 0) + evProf(P.bot, 0)) / 2, P.tail);
+  for (let k = 0; k < K; k++) idx.push(tailC, k, (k + 1) % K);
+  const noseC = pos.length / 3, base = (M - 1) * K;
+  pos.push(0, (evProf(P.top, 1) + evProf(P.bot, 1)) / 2, P.nose);
+  for (let k = 0; k < K; k++) idx.push(noseC, base + (k + 1) % K, base + k);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+const CAR_BOT = [[0, .2], [.10, .2], [.14, .5], [.23, .5], [.28, .2], [.72, .2], [.77, .5], [.87, .5], [.91, .2], [1, .24]];
+const geoCache = {};
+function bodyGeo(spec) {
+  const key = spec.id + ':b';
+  if (geoCache[key]) return geoCache[key];
+  const L = spec.loft;
+  return geoCache[key] = loftBody({
+    tail: -2.3, nose: 2.3, width: L.width, top: L.top, bot: CAR_BOT, exp: L.exp,
+    arches: [{ z: -1.47, amp: L.archAmp, w: .44 }, { z: 1.47, amp: L.archAmp * .8, w: .4 }]
+  });
+}
+function canopyGeo(spec) {
+  const key = spec.id + ':g';
+  if (geoCache[key]) return geoCache[key];
+  const G = spec.glass;
+  return geoCache[key] = loftBody({ tail: G.z[0], nose: G.z[1], width: G.width, top: G.top, bot: G.bot, exp: G.exp });
+}
+const ARCH_GEO = new THREE.CylinderGeometry(.42, .42, .36, 14, 1, true, 0, Math.PI);
 ARCH_GEO.rotateZ(Math.PI / 2);                   // downward-opening shell, axis along x
 function buildCarMesh(spec) {
   const g = new THREE.Group();
@@ -868,12 +960,10 @@ function buildCarMesh(spec) {
     m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
     m.castShadow = true; g.add(m); return m;
   };
-  add(BODY_GEO, paint, 0, 0, 0);
-  add(CANOPY_GEO, glass, 0, 0, -.05);
-  for (const [x, z] of [[.86, 1.47], [-.86, 1.47], [.86, -1.47], [-.86, -1.47]]) {
-    add(ARCH_GEO, dark, x, .38, z);                                       // wheel arches
-    add(new THREE.BoxGeometry(.3, .05, 1.06), paint, x * 1.06, .8, z);    // fender blisters
-  }
+  add(bodyGeo(spec), paint, 0, 0, 0);
+  add(canopyGeo(spec), glass, 0, 0, 0);
+  for (const [x, z] of [[.87, 1.47], [-.87, 1.47], [.87, -1.47], [-.87, -1.47]])
+    add(ARCH_GEO, dark, x, .34, z);                                       // arch liners
   add(new THREE.BoxGeometry(.14, .15, 2.4), dark, .9, .245, 0);           // rockers
   add(new THREE.BoxGeometry(.14, .15, 2.4), dark, -.9, .245, 0);
   add(new THREE.BoxGeometry(1.96, .06, .5), dark, 0, .17, 2.12);          // splitter
@@ -894,8 +984,8 @@ function buildCarMesh(spec) {
   const exMat = new THREE.MeshStandardMaterial({ color: 0x53565c, metalness: .95, roughness: .3 });
   add(exhaust, exMat, .32, .3, -2.36); add(exhaust, exMat, -.32, .3, -2.36);
   const headMat = new THREE.MeshStandardMaterial({ color: 0xeaf4ff, emissive: 0xdfefff, emissiveIntensity: 2.2 });
-  add(new THREE.BoxGeometry(.5, .05, .05), headMat, .6, .56, 2.3, 0, 0, .06);   // DRL strips
-  add(new THREE.BoxGeometry(.5, .05, .05), headMat, -.6, .56, 2.3, 0, 0, -.06);
+  add(new THREE.BoxGeometry(.44, .05, .06), headMat, .48, .47, 2.28, 0, 0, .08);   // DRL strips
+  add(new THREE.BoxGeometry(.44, .05, .06), headMat, -.48, .47, 2.28, 0, 0, -.08);
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x30070a, emissive: 0xff1a22, emissiveIntensity: .9 });
   const tail = add(new THREE.BoxGeometry(1.74, .08, .06), tailMat, 0, .66, -2.46); // full-width light bar
   // wheels
@@ -927,13 +1017,12 @@ function buildCarMesh(spec) {
     g.add(hub);
     wheels.push({ hub, spin, front: !!front });
   }
-  if (spec.stripe) {                                 // hood + deck livery stripes
+  if (spec.stripe) {                                 // hood livery stripes, seated on the loft hood
+    const hoodY = evProf(spec.loft.top, .88) + .003;
     for (const sx of spec.stripe === 'twin' ? [-.24, .24] : [0]) {
-      add(new THREE.BoxGeometry(spec.stripe === 'twin' ? .17 : .44, .02, 1.45), accent, sx, .675, 1.66, .2);
-      add(new THREE.BoxGeometry(spec.stripe === 'twin' ? .17 : .44, .02, .8), accent, sx, .855, -1.5, .03);
+      add(new THREE.BoxGeometry(spec.stripe === 'twin' ? .17 : .44, .02, 1.1), accent, sx, hoodY - .07, 1.72, .22);
     }
   }
-  if (spec.shape) g.scale.set(spec.shape[0], spec.shape[1], spec.shape[2]);
   return { group: g, wheels, tail, disc: discMat };
 }
 
@@ -1024,6 +1113,12 @@ class EngineVoice {
     this.subG = ctx.createGain(); this.subG.gain.value = 0;
     this.sub.connect(this.subG); this.subG.connect(this.out); this.sub.start();
     if (!lite) {
+      // straight-cut gear whine
+      this.wh = ctx.createOscillator(); this.wh.type = 'sawtooth';
+      this.whG = ctx.createGain(); this.whG.gain.value = 0;
+      this.wh.connect(this.whG); this.whG.connect(this.out); this.wh.start();
+    }
+    if (!lite) {
       // combustion roughness: slow noise wobbles the harmonic bus level
       this.rSrc = ctx.createBufferSource(); this.rSrc.buffer = AU.noiseBuf; this.rSrc.loop = true;
       this.rSrc.playbackRate.value = .08;
@@ -1065,6 +1160,10 @@ class EngineVoice {
     this.sub.frequency.setTargetAtTime(Math.max(24, f0 * .5), t, .02);
     this.subG.gain.setTargetAtTime((s.sub || .3) * .5 * drive * vol, t, .04);
     this.filt.frequency.setTargetAtTime((s.filt || 2600) * (.34 + .5 * load + .3 * rpm01), t, .03);
+    if (this.wh) {
+      this.wh.frequency.setTargetAtTime(340 + rpm01 * 1500, t, .02);
+      this.whG.gain.setTargetAtTime(vol * .016 * (.25 + .75 * load) * (AU.muted ? 0 : 1), t, .05);
+    }
     this.gain = vol;
     this.out.gain.setTargetAtTime(vol * (.5 + .28 * load) * (AU.muted ? 0 : 1), t, .04);
     if (this.tG) {
@@ -1097,6 +1196,7 @@ class EngineVoice {
       if (this.tSrc) this.tSrc.stop();
       if (this.rSrc) this.rSrc.stop();
       if (this.eSrc) this.eSrc.stop();
+      if (this.wh) this.wh.stop();
     } catch {}
     this.out.disconnect();
   }
@@ -1324,7 +1424,7 @@ class PlayerCar {
         const sev = clamp(vn / 14, 0, 1);
         if (this.railHit <= 0) { AU.burst(140, .3, .5 * sev + .1, 'lowpass', 1); AU.burst(2600, .25, .3 * sev, 'highpass', 1); }
         this.railHit = .25; shake = Math.max(shake, sev * .8);
-        rumble(sev, 1, 180);
+        rumble(sev, 1, 180); if (sev > .25) hitFlash(sev * .8);
         Vx2 *= 1 - .04 * sev; Vz2 *= 1 - .04 * sev;
       }
       this.vx = Vx2 * sy + Vz2 * cy; this.vy = Vx2 * cy - Vz2 * sy;
@@ -1439,6 +1539,12 @@ class AICar {
   destroy() { scene.remove(this.mesh); if (this.voice) { this.voice.destroy(); this.voice = null; } }
 }
 
+function hitFlash(sev) {
+  const f = $('flash');
+  f.style.opacity = Math.min(.85, sev);
+  clearTimeout(hitFlash._t);
+  hitFlash._t = setTimeout(() => f.style.opacity = 0, 130);
+}
 // gamepad haptics — shifts, curbs, rail hits
 function rumble(s, w, ms) {
   const gp = navigator.getGamepads && navigator.getGamepads()[0];
@@ -1661,14 +1767,18 @@ function startRace() {
   voices.wind = new LoopNoise('lowpass', 700, .6);
   voices.grass = new LoopNoise('bandpass', 190, 1.4);
   voices.roll = new LoopNoise('lowpass', 260, .4);
+  // ignition: starter whirr, then the engine catches
+  setTimeout(() => AU.burst(110, .5, .32, 'lowpass', 1), 80);
+  setTimeout(() => AU.burst(150, .35, .28, 'lowpass', 1), 420);
+  setTimeout(() => { if (player && player.voice) player.voice.pops(.6); }, 680);
   if (mode === 'race') {
     const pool = CARS.filter((c, i) => i !== selIdx);
     pool.push(CARS[selIdx]);
-    for (let k = 0; k < 5; k++) {
+    for (let k = 0; k < 7; k++) {
       const s = LAP_LEN - 17 - k * 9.5, lat = (k % 2 ? -2.4 : 2.4);
-      ais.push(new AICar(pool[k % pool.length], s, lat, .955 + k * .012));
+      ais.push(new AICar(pool[k % pool.length], s, lat, .948 + k * .011));
     }
-    player.placeAt(LAP_LEN - 17 - 5 * 9.5, (5 % 2 ? -2.4 : 2.4));
+    player.placeAt(LAP_LEN - 17 - 7 * 9.5, (7 % 2 ? -2.4 : 2.4));
   } else {
     player.placeAt(LAP_LEN - 20, 0);
   }
@@ -1960,7 +2070,7 @@ function frame(now) {
         const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
         let Vx = sy * player.vx + cy * player.vy, Vz = cy * player.vx - sy * player.vy;
         const vn = Vx * nx2 + Vz * nz2;
-        if (vn > 0) { Vx -= nx2 * vn * 1.2; Vz -= nz2 * vn * 1.2; AU.burst(160, .2, .3, 'lowpass', 1); shake = Math.max(shake, .5); }
+        if (vn > 0) { Vx -= nx2 * vn * 1.2; Vz -= nz2 * vn * 1.2; AU.burst(160, .2, .3, 'lowpass', 1); shake = Math.max(shake, .5); hitFlash(.35); rumble(.5, .8, 140); }
         player.vx = Vx * sy + Vz * cy; player.vy = Vx * cy - Vz * sy;
       }
     }
