@@ -352,7 +352,7 @@ const TRACKS = {
   },
   nring: {
     name: 'NORDSCHLEIFE', jp: 'EIFEL · GERMANY', cat: 'gt', style: 'eifel',
-    len: '20.7 km', desc: 'the Green Hell — real 1:1 layout, fast GT traffic',
+    len: '20.7 km', desc: 'the Green Hell in FULL 3D — real 1:1 layout, GT3 field',
     build: buildNring
   },
   city: {
@@ -4089,7 +4089,11 @@ function startGame() {
           const i = (ids.indexOf(G.track) + dir + ids.length) % ids.length;
           switchTrack(ids[i]);
         }
-        if (k === 'enter') { SAVE.set('track', G.track); G.state = 'garage'; }
+        if (k === 'enter') {
+          SAVE.set('track', G.track);
+          if (G.track === 'nring') { location.href = 'ring.html'; break; }   // full-3D Nordschleife
+          G.state = 'garage';
+        }
         if (k === 'esc' || k === 'back') G.state = 'title';
         break;
       case 'garage': {
